@@ -1,0 +1,33 @@
+{
+  "name": "jd-mailer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "test": "esbuild tests/entry.ts --bundle --format=esm --platform=node --outfile=tests/.bundle.mjs --log-level=error && node tests/suite.test.mjs"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.126.0",
+    "imapflow": "^2.0.6",
+    "next": "^16.3.5",
+    "nodemailer": "^10.0.10",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "tesseract.js": "^7.0.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^22.20.3",
+    "@types/nodemailer": "^8.0.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "esbuild": "^0.28.2",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2"
+  }
+}
