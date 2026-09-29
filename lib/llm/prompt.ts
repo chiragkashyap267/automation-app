@@ -105,6 +105,8 @@ const TONE_GUIDE: Record<Profile["tone"], string> = {
 
 const EXTRACT_RULES = `You read job postings. You receive one or more inputs: screenshots of job posts, and/or pasted job description text. Several inputs may be pages of ONE posting, and one input may contain SEVERAL postings. Decide from the content, and return one entry in "jobs" per distinct posting.
 
+Default to ONE. A single screenshot is almost always a single posting. Return more than one entry only when the input plainly shows separate postings — different roles at different companies, or a list of distinct openings. The parts of one posting are NOT separate postings: a requirements list, a responsibilities list, "what we offer", a nice-to-have section, a second contact address, or a second page of the same advert all belong to the SAME entry. Splitting one posting into several is a worse mistake than missing a second posting, because it sends the same company several near-identical emails.
+
 For each posting:
 - company, role, location: copy from the posting. Use "" if genuinely absent. Never invent a company name.
 - reqId: the requisition or job ID the posting shows, such as "REQ-4471", "JR12345" or "#8891". "" when the posting has none. Never invent one.

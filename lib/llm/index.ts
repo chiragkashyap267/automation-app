@@ -3,6 +3,7 @@ import { outreachWithGemini, reviseWithGemini, runGemini, writeWithGemini } from
 import { outreachWithGroq, readWithGroq, reviseWithGroq, writeWithGroq } from "./groq";
 import { outreachWithCerebras, reviseWithCerebras, writeWithCerebras } from "./cerebras";
 import { cerebrasPool, geminiPool, groqPool } from "./keyPool";
+import { dedupeJobs } from "@/lib/dedupe";
 import { unsupportedClaimsIn } from "@/lib/validate";
 import type { Facts, OutreachTarget, Written } from "./prompt";
 import type { Profile } from "@/lib/types";
@@ -107,7 +108,12 @@ export async function readJobs(
   let firstError: unknown;
   for (const reader of candidates) {
     try {
-      return { result: await readWith(reader, req, mode), reader };
+      const result = await readWith(reader, req, mode);
+      const jobs = dedupeJobs(result.jobs);
+      if (jobs.length !== result.jobs.length) {
+        console.warn(`[read] ${reader} split one posting into ${result.jobs.length}; merged to ${jobs.length}`);
+      }
+      return { result: { jobs }, reader };
     } catch (err) {
       firstError ??= err;
       console.error(`[read] ${reader} failed, trying next`, err instanceof Error ? err.message : err);

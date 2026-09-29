@@ -313,6 +313,16 @@ async function handleMessage(message: TgMessage) {
     return;
   }
 
+  // One screenshot producing several drafts is nearly always a misread, and
+  // sending them all would mean near-identical mail to the same company.
+  if (jobs.length > 1) {
+    await say(
+      chatId,
+      `I read ${jobs.length} separate postings in that. If it was really one, ignore the extras — ` +
+        `each has its own Send button and nothing goes out until you tap one.`,
+    );
+  }
+
   for (const job of jobs) {
     const { addresses, suspicious } = cleanRecipients(job.recipients ?? []);
     const body = composeEmail(normalizePlainText(job.body ?? ""), me);
