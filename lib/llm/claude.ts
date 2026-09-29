@@ -5,7 +5,10 @@ import {
   ExtractSchema,
   FULL_SYSTEM_PROMPT,
   JobsSchema,
+  OUTREACH_SYSTEM_PROMPT,
   WRITE_SYSTEM_PROMPT,
+  buildOutreachText,
+  type OutreachTarget,
   WrittenSchema,
   buildWriteText,
   type Facts,
@@ -68,15 +71,15 @@ export async function runClaude(req: LlmRequest, mode: ReadMode): Promise<ReadRe
   return response.parsed_output as ReadResult;
 }
 
-export async function writeWithClaude(profile: Profile, facts: Facts): Promise<Written> {
+async function complete(system: string, user: string): Promise<Written> {
   const client = new Anthropic();
 
   const response = await client.messages.parse({
     model: MODEL,
     max_tokens: 4000,
-    system: WRITE_SYSTEM_PROMPT,
+    system,
     thinking: { type: "adaptive" },
-    messages: [{ role: "user", content: buildWriteText(profile, facts) }],
+    messages: [{ role: "user", content: user }],
     output_config: {
       format: zodOutputFormat(WrittenSchema),
       ...(EFFORT ? { effort: EFFORT } : {}),
@@ -88,4 +91,12 @@ export async function writeWithClaude(profile: Profile, facts: Facts): Promise<W
     throw new Error("Claude returned an email in an unexpected shape.");
   }
   return response.parsed_output;
+}
+
+export function writeWithClaude(profile: Profile, facts: Facts): Promise<Written> {
+  return complete(WRITE_SYSTEM_PROMPT, buildWriteText(profile, facts));
+}
+
+export function outreachWithClaude(profile: Profile, target: OutreachTarget): Promise<Written> {
+  return complete(OUTREACH_SYSTEM_PROMPT, buildOutreachText(profile, target));
 }

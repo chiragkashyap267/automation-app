@@ -32,7 +32,11 @@ export function preflight(req: Pick<MailRequest, "to" | "subject" | "text">): st
 /** Turns an SMTP failure into something a human can act on. */
 export function explainSmtpError(raw: string): string {
   if (/Invalid login|Username and Password not accepted|535/i.test(raw)) {
-    return "Gmail rejected the login. Use a 16-character App Password (not your normal Gmail password), and make sure 2-Step Verification is on.";
+    return (
+      "Gmail rejected the login. Check both halves: the address must be the exact account the " +
+      "App Password was created on (a typo there looks identical to a wrong password), and the " +
+      "password must be the 16-character App Password, not your normal Gmail password."
+    );
   }
   if (/ETIMEDOUT|ECONNREFUSED|ENOTFOUND/i.test(raw)) {
     return "Could not reach Gmail's server. Check the connection and retry.";

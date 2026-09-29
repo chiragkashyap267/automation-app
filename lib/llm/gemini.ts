@@ -5,7 +5,10 @@ import {
   GEMINI_EXTRACT_SCHEMA,
   GEMINI_FULL_SCHEMA,
   JobsSchema,
+  OUTREACH_SYSTEM_PROMPT,
   WRITE_SYSTEM_PROMPT,
+  buildOutreachText,
+  type OutreachTarget,
   WrittenSchema,
   buildWriteText,
   type Facts,
@@ -204,12 +207,12 @@ export async function runGemini(req: LlmRequest, mode: ReadMode): Promise<ReadRe
 }
 
 /** Writing fallback, used when no Groq or Claude key is configured. */
-export async function writeWithGemini(profile: Profile, facts: Facts): Promise<Written> {
+async function complete(system: string, user: string): Promise<Written> {
   const parsed = await withFailover((state) =>
     callGemini(
       state,
-      [{ text: buildWriteText(profile, facts) }],
-      WRITE_SYSTEM_PROMPT,
+      [{ text: user }],
+      system,
       {
         type: "object",
         properties: { subject: { type: "string" }, body: { type: "string" } },
@@ -223,4 +226,12 @@ export async function writeWithGemini(profile: Profile, facts: Facts): Promise<W
   const result = WrittenSchema.safeParse(parsed);
   if (!result.success) throw new Error("Gemini returned an email in an unexpected shape.");
   return result.data;
+}
+
+export function writeWithGemini(profile: Profile, facts: Facts): Promise<Written> {
+  return complete(WRITE_SYSTEM_PROMPT, buildWriteText(profile, facts));
+}
+
+export function outreachWithGemini(profile: Profile, target: OutreachTarget): Promise<Written> {
+  return complete(OUTREACH_SYSTEM_PROMPT, buildOutreachText(profile, target));
 }

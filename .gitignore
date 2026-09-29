@@ -6,3 +6,4 @@ node_modules
 next-env.d.ts
 
 tests/.bundle.mjs
+tests/.readers.bundle.mjs

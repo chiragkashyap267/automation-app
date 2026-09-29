@@ -1,5 +1,8 @@
 import {
   EXTRACT_SYSTEM_PROMPT,
+  OUTREACH_SYSTEM_PROMPT,
+  buildOutreachText,
+  type OutreachTarget,
   ExtractSchema,
   FULL_SYSTEM_PROMPT,
   JobsSchema,
@@ -150,14 +153,13 @@ async function withFailover<T>(run: (state: KeyState) => Promise<T>): Promise<T>
   );
 }
 
-export async function writeWithGroq(profile: Profile, facts: Facts): Promise<Written> {
+/** One structured email completion, whatever the prompt asks for. */
+async function complete(system: string, user: string): Promise<Written> {
   const parsed = await withFailover((state) =>
     callGroq(
       state,
-      `${WRITE_SYSTEM_PROMPT}
-
-Return a JSON object with exactly two string keys: "subject" and "body". No other keys.`,
-      buildWriteText(profile, facts),
+      system,
+      user,
       1400,
       0.5,
     ),
@@ -167,6 +169,20 @@ Return a JSON object with exactly two string keys: "subject" and "body". No othe
   // A malformed body is the model's fault, not the key's — do not bench a key for it.
   if (!result.success) throw new Error("Groq returned an email in an unexpected shape.");
   return result.data;
+}
+
+const JSON_SHAPE = 'Return a JSON object with exactly two string keys: "subject" and "body". No other keys.';
+
+export function writeWithGroq(profile: Profile, facts: Facts): Promise<Written> {
+  return complete(`${WRITE_SYSTEM_PROMPT}
+
+${JSON_SHAPE}`, buildWriteText(profile, facts));
+}
+
+export function outreachWithGroq(profile: Profile, target: OutreachTarget): Promise<Written> {
+  return complete(`${OUTREACH_SYSTEM_PROMPT}
+
+${JSON_SHAPE}`, buildOutreachText(profile, target));
 }
 
 const JOBS_SHAPE = `Return a JSON object with one key "jobs", an array. Each entry must have exactly these keys: "company" (string), "role" (string), "location" (string), "reqId" (string), "recipients" (array of strings), "contactName" (string), "highlights" (array of strings), "seniority" (string), "confidence" ("high" | "medium" | "low"), "notes" (string)`;

@@ -192,6 +192,52 @@ export function buildTaskText(profile: Profile, pastedText: string[]): string {
   ].join("");
 }
 
+/** A recruiting address rarely names the company; the domain almost always does. */
+export function companyFromEmail(email: string): string {
+  const domain = (email.split("@")[1] ?? "").toLowerCase();
+  const generic = /^(gmail|yahoo|outlook|hotmail|protonmail|icloud|rediffmail|zoho)\./;
+  if (!domain || generic.test(domain)) return "";
+
+  const label = domain.split(".")[0];
+  if (!label || label.length < 2 || /^(mail|jobs|careers|hr|info|apply|contact|recruit)$/.test(label)) {
+    return "";
+  }
+  return label.replace(/[-_]/g, " ").replace(/\b[a-z]/g, (c) => c.toUpperCase());
+}
+
+export type OutreachTarget = {
+  email: string;
+  /** What the candidate is asking about, e.g. "Software Engineer". */
+  role: string;
+  /** Inferred from the address unless the user named it. */
+  company: string;
+};
+
+export const OUTREACH_SYSTEM_PROMPT = `Write a short cold email asking whether a company has openings. There is NO job posting — the candidate is approaching them speculatively, so do not pretend to be responding to an advertised role.
+
+- subject: short and plain, naming the kind of role. Something like "Software Engineer — open to opportunities" or "Frontend Developer enquiry". Never mention a job ID or a specific vacancy.
+- body: plain text, no markdown, no bullet characters. Paragraphs separated by a blank line.
+- LENGTH: 50-80 words. Two short paragraphs. Shorter than a normal application, because there is nothing specific to respond to.
+- The FIRST line is the salutation on its own, followed by a blank line: "Dear Hiring Team," unless a name is given.
+- Line 1: say plainly that you are reaching out to ask whether they have openings for the named kind of role. Do not claim to have seen a posting, a careers page, or a LinkedIn ad — you have not.
+- Then ONE short paragraph: who the candidate is and the single strongest reason to talk to them, using a real technology or number from their profile.
+- Close by asking to be considered, or pointed to the right person.
+- Never invent anything about the company: no praise for products, culture or mission you know nothing about. "I admire your work in fintech" is a lie unless the profile says so.
+
+Mention an attached resume ONLY if the profile says one is attached.
+
+CRITICAL — do NOT write a sign-off, your name, phone, email, or links at the end. The body must STOP at the closing ask. A signature is appended automatically.`;
+
+export function buildOutreachText(profile: Profile, target: OutreachTarget): string {
+  const about = [
+    `Sending to: ${target.email}`,
+    target.company ? `Company (inferred from the address): ${target.company}` : "Company: unknown",
+    `Kind of role being asked about: ${target.role}`,
+  ].join("\n");
+
+  return `${buildProfileBlock(profile)}\n\nTHE APPROACH\n${about}\n\nWrite the subject and body for this speculative enquiry.`;
+}
+
 export function buildWriteText(profile: Profile, facts: Facts): string {
   const posting = [
     `Company: ${facts.company || "(not stated)"}`,

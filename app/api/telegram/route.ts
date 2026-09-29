@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { readJobs } from "@/lib/llm";
-import { buildTaskText } from "@/lib/llm/prompt";
+import { readJobs, writeOutreach } from "@/lib/llm";
+import { buildTaskText, companyFromEmail } from "@/lib/llm/prompt";
 import { explainSmtpError, preflight, sendMail } from "@/lib/mailer";
 import { SEED_PROFILE } from "@/lib/seed";
 import { composeEmail, normalizePlainText } from "@/lib/signature";
@@ -69,10 +69,11 @@ function profile(): Profile {
   return {
     ...EMPTY_PROFILE,
     ...SEED_PROFILE,
-    gmailUser: process.env.GMAIL_USER ?? "",
-    gmailAppPassword: process.env.GMAIL_APP_PASSWORD ?? "",
+    // Trim: a stray space or newline in an env var reads as a wrong account.
+    gmailUser: (process.env.GMAIL_USER ?? "").trim(),
+    gmailAppPassword: (process.env.GMAIL_APP_PASSWORD ?? "").replace(/\s+/g, ""),
     // The browser holds the resume file; the bot fetches one from a URL instead.
-    resumeFileName: process.env.RESUME_URL ? "resume.pdf" : "",
+    resumeFileName: process.env.RESUME_URL?.trim() ? resumeFilename() : "",
   };
 }
 
@@ -92,20 +93,71 @@ async function fetchImage(fileId: string): Promise<{ mediaType: string; data: st
   return { mediaType, data: buffer.toString("base64") };
 }
 
-async function fetchResume() {
-  const url = process.env.RESUME_URL;
-  if (!url) return undefined;
-  try {
-    const res = await fetch(url);
-    if (!res.ok) return undefined;
-    return {
-      filename: process.env.RESUME_FILENAME || "resume.pdf",
-      content: Buffer.from(await res.arrayBuffer()),
-      contentType: "application/pdf",
-    };
-  } catch {
-    return undefined;
+/**
+ * Share links point at a viewer page, not the file. Google Drive's "/view" URL
+ * returns 86 KB of HTML that, attached as resume.pdf, simply will not open.
+ * Rewrite the common ones to their direct-download form.
+ */
+export function resolveResumeUrl(url: string): string {
+  const drive = url.match(/drive\.google\.com\/file\/d\/([\w-]+)/);
+  if (drive) return `https://drive.google.com/uc?export=download&id=${drive[1]}`;
+
+  const driveOpen = url.match(/drive\.google\.com\/open\?id=([\w-]+)/);
+  if (driveOpen) return `https://drive.google.com/uc?export=download&id=${driveOpen[1]}`;
+
+  const docs = url.match(/docs\.google\.com\/document\/d\/([\w-]+)/);
+  if (docs) return `https://docs.google.com/document/d/${docs[1]}/export?format=pdf`;
+
+  if (/dropbox\.com/.test(url)) {
+    const stripped = url.replace(/[?&]dl=[01]/g, "");
+    return `${stripped}${stripped.includes("?") ? "&" : "?"}dl=1`;
   }
+
+  return url;
+}
+
+/** A name a mail client will open without arguing. */
+export function resumeFilename(): string {
+  const raw = (process.env.RESUME_FILENAME || "resume").trim();
+  return /\.pdf$/i.test(raw) ? raw : `${raw}.pdf`;
+}
+
+type ResumeResult =
+  | { ok: true; attachment: { filename: string; content: Buffer; contentType: string } }
+  | { ok: false; reason: string };
+
+async function fetchResume(): Promise<ResumeResult | null> {
+  const configured = process.env.RESUME_URL?.trim();
+  if (!configured) return null;
+
+  const url = resolveResumeUrl(configured);
+
+  let buffer: Buffer;
+  try {
+    const res = await fetch(url, { redirect: "follow" });
+    if (!res.ok) return { ok: false, reason: `the resume URL returned ${res.status}` };
+    buffer = Buffer.from(await res.arrayBuffer());
+  } catch {
+    return { ok: false, reason: "the resume URL could not be reached" };
+  }
+
+  // Trust the bytes, not the URL or the content-type header.
+  if (buffer.subarray(0, 5).toString("latin1") !== "%PDF-") {
+    return {
+      ok: false,
+      reason:
+        "that link returns a web page, not a PDF. Use the file's direct-download link, and make sure it is shared with 'Anyone with the link'",
+    };
+  }
+
+  return {
+    ok: true,
+    attachment: {
+      filename: resumeFilename(),
+      content: buffer,
+      contentType: "application/pdf",
+    },
+  };
 }
 
 /** The reply doubles as the store, so its shape has to be parseable. */
@@ -131,11 +183,60 @@ function parseDraft(text: string) {
   };
 }
 
-const HELP = `Send me a job description — paste the text, or send a screenshot.
+const HELP = `Two things I can do.
 
-I read it, write the application email from your profile, and reply with a Send button.
+1. JOB DESCRIPTION — paste the text or send a screenshot. I read it, write the application email from your profile, and reply with a Send button.
+   Several postings in one message become several drafts.
+   Screenshots are read one message at a time, so send one per posting. For a posting split across several screenshots, use the web app and Merge them.
 
-You can send several screenshots of one posting together as an album.`;
+2. COLD ENQUIRY — no posting, just ask:
+   /ask hr@company.com Software Engineer
+   Or send a bare email address and I will use your usual title.
+   This writes a short "do you have openings?" email instead.`;
+
+const EMAIL_ONLY = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** "/ask hr@co.com Backend Engineer" or just a bare address. */
+function parseAsk(text: string): { email: string; role: string } | null {
+  const stripped = text.replace(/^\/ask(?:@\w+)?\s*/i, "").trim();
+  const asked = /^\/ask\b/i.test(text);
+
+  const [first, ...rest] = stripped.split(/\s+/);
+  if (!first || !EMAIL_ONLY.test(first)) return null;
+  // A bare address with no command is treated as an enquiry too.
+  if (!asked && rest.length) return null;
+
+  return { email: first.toLowerCase(), role: rest.join(" ").trim() };
+}
+
+async function handleAsk(chatId: number, ask: { email: string; role: string }) {
+  const me = profile();
+  const role = ask.role || me.headline.trim() || "Software Engineer";
+  const company = companyFromEmail(ask.email);
+
+  await tg("sendChatAction", { chat_id: chatId, action: "typing" });
+
+  let written;
+  try {
+    ({ written } = await writeOutreach(me, { email: ask.email, role, company }));
+  } catch (err) {
+    await say(chatId, `⚠️ ${err instanceof Error ? err.message : "Could not write that."}`);
+    return;
+  }
+
+  const body = composeEmail(normalizePlainText(written.body), me);
+  const draft = renderDraft(
+    company || "Cold enquiry",
+    role,
+    [ask.email],
+    normalizePlainText(written.subject),
+    body,
+  );
+
+  await say(chatId, draft, {
+    reply_markup: { inline_keyboard: [[{ text: "✉️ Send it", callback_data: "send" }]] },
+  });
+}
 
 async function handleMessage(message: TgMessage) {
   const chatId = message.chat.id;
@@ -144,6 +245,20 @@ async function handleMessage(message: TgMessage) {
   if (/^\/(start|help)\b/.test(text)) {
     await say(chatId, HELP);
     return;
+  }
+
+  // A cold enquiry has no posting to read, so it skips the extract step
+  // entirely and goes straight to writing.
+  if (!message.photo?.length) {
+    const ask = parseAsk(text);
+    if (ask) {
+      await handleAsk(chatId, ask);
+      return;
+    }
+    if (/^\/ask\b/i.test(text)) {
+      await say(chatId, "Usage:  /ask hr@company.com Software Engineer");
+      return;
+    }
   }
 
   const images: { mediaType: string; data: string }[] = [];
@@ -228,6 +343,14 @@ async function handleCallback(query: NonNullable<TgUpdate["callback_query"]>) {
     return;
   }
 
+  // The email text may say a resume is attached, so a broken resume must stop
+  // the send rather than quietly produce a mail that contradicts itself.
+  const resume = await fetchResume();
+  if (resume && !resume.ok) {
+    await answer(`Not sent — ${resume.reason}.`.slice(0, 190));
+    return;
+  }
+
   try {
     await sendMail({
       user: me.gmailUser,
@@ -238,7 +361,7 @@ async function handleCallback(query: NonNullable<TgUpdate["callback_query"]>) {
       replyTo: me.email || undefined,
       subject: parsed.subject,
       text: parsed.body,
-      attachment: await fetchResume(),
+      attachment: resume?.ok ? resume.attachment : undefined,
     });
 
     await answer("Sent");

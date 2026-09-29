@@ -53,5 +53,73 @@ check("the tricky body is intact", tricky.body, "Dear Team,\n\nPut Subject: the 
 
 check("garbage in gives null, not a bad send", parseDraft("just some text"), null);
 
+// Resume links: a share URL points at a viewer page, not the file.
+const helpers = src.slice(src.indexOf("export function resolveResumeUrl"), src.indexOf("type ResumeResult"));
+const h = await import(
+  "data:text/javascript," +
+    encodeURIComponent(helpers.replace(/:\s*string/g, "").replace(/\bexport function /g, "export function "))
+);
+
+check(
+  "a Drive /view link becomes a direct download",
+  h.resolveResumeUrl("https://drive.google.com/file/d/1fCVAsfBgcUEVD7LxZgaF8rgGM1qD1HA1/view?usp=sharing"),
+  "https://drive.google.com/uc?export=download&id=1fCVAsfBgcUEVD7LxZgaF8rgGM1qD1HA1",
+);
+check(
+  "a Drive open?id link is converted too",
+  h.resolveResumeUrl("https://drive.google.com/open?id=ABC123xyz"),
+  "https://drive.google.com/uc?export=download&id=ABC123xyz",
+);
+check(
+  "a Google Doc is exported as PDF",
+  h.resolveResumeUrl("https://docs.google.com/document/d/DOC99/edit"),
+  "https://docs.google.com/document/d/DOC99/export?format=pdf",
+);
+check(
+  "a Dropbox preview link becomes a download",
+  h.resolveResumeUrl("https://www.dropbox.com/s/abc/cv.pdf?dl=0"),
+  "https://www.dropbox.com/s/abc/cv.pdf?dl=1",
+);
+check(
+  "a plain direct URL is left alone",
+  h.resolveResumeUrl("https://example.com/cv.pdf"),
+  "https://example.com/cv.pdf",
+);
+
+process.env.RESUME_FILENAME = "Chirag_KashyapCV";
+check("a missing .pdf extension is added", h.resumeFilename(), "Chirag_KashyapCV.pdf");
+process.env.RESUME_FILENAME = "cv.pdf";
+check("an existing .pdf extension is not doubled", h.resumeFilename(), "cv.pdf");
+
+// /ask parsing decides whether a message is a cold enquiry or a job posting.
+const askSrc = src.slice(src.indexOf("const EMAIL_ONLY"), src.indexOf("async function handleAsk"));
+const a = await import(
+  "data:text/javascript," +
+    encodeURIComponent(
+      askSrc
+        .replace(/:\s*\{ email: string; role: string \}\s*\|\s*null/g, "")
+        .replace(/:\s*string/g, "")
+        .replace(/\bfunction parseAsk/, "export function parseAsk")
+    )
+);
+
+check("/ask with a role", a.parseAsk("/ask hr@acme.io Backend Engineer"), {
+  email: "hr@acme.io",
+  role: "Backend Engineer",
+});
+check("/ask without a role falls back later", a.parseAsk("/ask hr@acme.io"), {
+  email: "hr@acme.io",
+  role: "",
+});
+check("a bare address is an enquiry", a.parseAsk("hr@acme.io"), { email: "hr@acme.io", role: "" });
+check("the address is lowercased", a.parseAsk("/ask HR@Acme.IO").email, "hr@acme.io");
+check("a job description is not mistaken for an enquiry", a.parseAsk("Hiring a dev, mail hr@acme.io"), null);
+check(
+  "an address followed by prose is left to the JD path",
+  a.parseAsk("hr@acme.io please consider me for backend roles"),
+  null,
+);
+check("plain text is not an enquiry", a.parseAsk("hello there"), null);
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
