@@ -110,7 +110,8 @@ For each posting:
 - reqId: the requisition or job ID the posting shows, such as "REQ-4471", "JR12345" or "#8891". "" when the posting has none. Never invent one.
 - seniority: "intern", "junior", "mid", "senior", "lead" or "" if the posting does not say.
 - recipients: every email address in the posting that could receive an application. Read them carefully off screenshots, including obfuscated forms ("name [at] company [dot] com" becomes "name@company.com"). If there is no email address anywhere, return an empty array. An empty array is correct and expected; a guessed address like careers@<company>.com is a serious error.
-- contactName: the named recruiter or hiring manager, if the posting names one. "" otherwise.
+  Screenshots often place a small envelope or contact icon immediately before an address, and that icon is frequently misread as a letter glued to the front — "Jnaincy.goel@x.com" is really "naincy.goel@x.com", and a stray symbol before "career@x.com" is not part of the address. Drop such a leading character when what remains is a clean name or a normal mailbox like career, hr or jobs. Return addresses in lower case.
+- contactName: the named recruiter or hiring manager, but only when the posting writes their name out as text. Do NOT invent a name by reading one out of an email address — a misread character there becomes a misspelling of a real person's name in the greeting. "" when no name is written out.
 - highlights: 3-5 short phrases naming the requirements this specific posting actually asks for. Put the most important technology or skill first.
 - confidence: "high" when company, role and at least one recipient were read cleanly. "medium" when the posting is clear but there is no email address, or the text was partly unreadable. "low" when you are unsure what the posting even is.
 - notes: one short line for the candidate, only when something needs their attention (no email found, unreadable screenshot, posting wants a portfolio link). "" when everything is fine.`;
@@ -131,9 +132,22 @@ Mention an attached resume ONLY if the profile says one is attached. If it says 
 
 CRITICAL — do NOT write a sign-off, your name, phone number, email address, or any links at the end. The body must STOP at the closing ask. A signature block with the candidate's contact details and links is appended automatically afterwards. Adding your own would duplicate it.
 
-HARD RULES
-- Never state experience, employers, degrees, or numbers that are not in the candidate profile. If the posting demands something the candidate lacks, either leave it out or frame the nearest genuine thing honestly. Do not claim years of experience the profile does not support.
-- Never use placeholders such as [Company], [Your Name] or TODO. Every field must be final, sendable text.`;
+HARD RULES — these matter more than sounding like a good match.
+
+1. Every factual claim must be traceable to the RESUME text. Before writing a sentence that says the candidate did something, find the words in the resume that say so. If they are not there, you may not write it.
+
+2. NEVER write "At <employer> I <did task>" unless that exact task appears in the resume under that employer. Inventing duties for a real employer is the worst thing you can do here — it is a lie told in the candidate's name to someone who may check.
+
+3. When the posting asks for a kind of work the candidate has NOT done, say so honestly and pivot. Do not manufacture the experience.
+   WRONG: "At Acme I wrote manual test cases and logged defects." (when the resume never mentions testing)
+   RIGHT: "My background is in full-stack development rather than dedicated QA, but I have debugged and reviewed production code daily, and I am keen to move into testing."
+   A candidate who is honestly adjacent is credible. One caught inventing experience is finished.
+
+4. Do not restate the posting's requirements as if they were the candidate's skills. "I have strong analytical and problem-solving abilities" copied from the requirements list is not evidence of anything.
+
+5. Never claim more years of experience than the profile states, and never fewer to seem junior.
+
+6. Never use placeholders such as [Company], [Your Name] or TODO. Every field must be final, sendable text.`;
 
 export const FULL_SYSTEM_PROMPT = `${EXTRACT_RULES}
 

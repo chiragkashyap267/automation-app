@@ -1,6 +1,7 @@
 "use client";
 
 import type { Facts } from "./llm/prompt";
+import { cleanRecipients } from "./email";
 import { normalizePlainText } from "./signature";
 import { localExtract } from "./localExtract";
 import { ocrImage } from "./ocr";
@@ -189,12 +190,15 @@ export async function processGroup(
     }
 
     for (const job of jobs) {
+      // Strip icon artifacts and normalise case before anything is sent.
+      const { addresses } = cleanRecipients(job.recipients ?? []);
+
       const facts: Facts = {
         company: job.company,
         role: job.role,
         location: job.location,
         reqId: job.reqId,
-        recipients: job.recipients,
+        recipients: addresses,
         contactName: job.contactName,
         highlights: job.highlights,
         seniority: job.seniority,

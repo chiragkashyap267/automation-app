@@ -1,3 +1,4 @@
+import { cleanRecipient, isGenericMailbox } from "./email";
 import type { Draft, Profile } from "./types";
 
 /**
@@ -215,6 +216,22 @@ export function validateDraft(draft: Draft, profile: Profile): Issue[] {
   }
 
   /* ── advisory ── */
+
+  for (const address of draft.recipients) {
+    const cleaned = cleanRecipient(address);
+    if (cleaned?.suspicious) {
+      const alternative = draft.recipients.find(
+        (other) => other !== address && isGenericMailbox(other),
+      );
+      push({
+        id: `odd-address:${address}`,
+        severity: "warning",
+        message:
+          `"${address}" starts oddly — screenshots often misread an icon into the address. ` +
+          `Check it against the posting${alternative ? `, or use ${alternative}` : ""}.`,
+      });
+    }
+  }
 
   if (!SALUTATION.test(body)) {
     push({

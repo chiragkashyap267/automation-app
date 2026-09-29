@@ -3,6 +3,7 @@ import { readJobs, writeOutreach } from "@/lib/llm";
 import { buildTaskText, companyFromEmail } from "@/lib/llm/prompt";
 import { explainSmtpError, preflight, sendMail } from "@/lib/mailer";
 import { SEED_PROFILE } from "@/lib/seed";
+import { cleanRecipients } from "@/lib/email";
 import { composeEmail, normalizePlainText } from "@/lib/signature";
 import { EMPTY_PROFILE, type Profile } from "@/lib/types";
 
@@ -298,11 +299,12 @@ async function handleMessage(message: TgMessage) {
   }
 
   for (const job of jobs) {
+    const { addresses, suspicious } = cleanRecipients(job.recipients ?? []);
     const body = composeEmail(normalizePlainText(job.body ?? ""), me);
     const subject = normalizePlainText(job.subject ?? "");
-    const draft = renderDraft(job.company, job.role, job.recipients, subject, body);
+    const draft = renderDraft(job.company, job.role, addresses, subject, body);
 
-    if (!job.recipients.length) {
+    if (!addresses.length) {
       await say(
         chatId,
         `${draft}\n\n⚠️ No email address in this posting — I cannot send it. Open the app to add one.`,
@@ -310,7 +312,13 @@ async function handleMessage(message: TgMessage) {
       continue;
     }
 
-    await say(chatId, draft, {
+    const warning = suspicious.length
+      ? `
+
+⚠️ Check ${suspicious.join(", ")} against the posting — a leading icon is often misread into the address.`
+      : "";
+
+    await say(chatId, draft + warning, {
       reply_markup: {
         inline_keyboard: [[{ text: "✉️ Send it", callback_data: "send" }]],
       },
