@@ -9,3 +9,5 @@ tests/.bundle.mjs
 tests/.readers.bundle.mjs
 tests/.email.bundle.mjs
 tests/.guard.bundle.mjs
+tests/.claims.bundle.mjs
+tests/.ab.bundle.mjs

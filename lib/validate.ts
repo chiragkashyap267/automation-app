@@ -167,6 +167,66 @@ function countWords(text: string): number {
   return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
+/**
+ * Activities a model reaches for when it wants to sound like a match. If one
+ * of these turns up in a sentence about a real employer but appears nowhere in
+ * the resume, the model has invented a duty and attributed it to a real job.
+ */
+const CLAIMABLE = [
+  "manual testing", "manually testing", "manually tested", "test case", "test cases",
+  "regression", "functional testing", "smoke testing", "defect", "defects", "bug tracking",
+  "jira", "selenium", "cypress", "playwright", "istqb", "sdlc", "stlc", "qa",
+  "unit test", "unit tests", "test plan", "test script", "automation testing",
+  "kubernetes", "terraform", "jenkins", "kafka", "rabbitmq", "microservices",
+  "machine learning", "tensorflow", "pytorch", "data pipeline", "etl", "tableau",
+  "power bi", "salesforce", "sap", "figma", "photoshop", "penetration testing",
+];
+
+/** Everything the candidate has actually said about themselves. */
+function profileCorpus(profile: Profile): string {
+  return [profile.resumeText, profile.skills, profile.headline, profile.extraNotes]
+    .join(" ")
+    .toLowerCase();
+}
+
+/**
+ * Saying you have NOT done something, or would like to, is honest — the
+ * opposite of the failure this looks for. Because a hit here blocks sending,
+ * a false positive costs more than a miss, so any of these clears the
+ * sentence entirely.
+ */
+const NOT_A_CLAIM =
+  /\b(rather than|instead of|not (in|my|been|done)|no direct|little direct|eager to|keen to|looking to|hoping to|hope to|want to|wish to|would like to|move into|moving into|transition|transitioning|pivot|although|though|while my|new to|learning|willing to|ready to|aspire|interested in|excited to|opportunity to)\b/i;
+
+/** Employer and project names, taken from the resume rather than guessed. */
+function knownNames(corpus: string, body: string): string[] {
+  const candidates = body.match(/\b[A-Z][A-Za-z0-9&.-]{2,}\b/g) ?? [];
+  return [...new Set(candidates)].filter((name) => corpus.includes(name.toLowerCase()));
+}
+
+export function unsupportedClaims(draft: Draft, profile: Profile): string[] {
+  const corpus = profileCorpus(profile);
+  if (corpus.trim().length < 40) return [];
+
+  const names = knownNames(corpus, draft.body);
+  if (!names.length) return [];
+
+  const found = new Set<string>();
+
+  for (const sentence of draft.body.split(/(?<=[.!?])\s+/)) {
+    const lower = sentence.toLowerCase();
+    // Only sentences that tie something to a real employer or project matter.
+    if (!names.some((name) => sentence.includes(name))) continue;
+    if (NOT_A_CLAIM.test(sentence)) continue;
+
+    for (const term of CLAIMABLE) {
+      if (lower.includes(term) && !corpus.includes(term)) found.add(term);
+    }
+  }
+
+  return [...found];
+}
+
 export function validateDraft(draft: Draft, profile: Profile): Issue[] {
   const issues: Issue[] = [];
   const body = draft.body;
@@ -216,6 +276,17 @@ export function validateDraft(draft: Draft, profile: Profile): Issue[] {
   }
 
   /* ── advisory ── */
+
+  const invented = unsupportedClaims(draft, profile);
+  if (invented.length) {
+    push({
+      id: "unsupported-claim",
+      severity: "error",
+      message:
+        `This says you did "${invented.join('", "')}" at a named employer, but none of that is ` +
+        `in your resume. Remove it or add it to your Details if it is true.`,
+    });
+  }
 
   for (const address of draft.recipients) {
     const cleaned = cleanRecipient(address);

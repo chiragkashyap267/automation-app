@@ -57,6 +57,11 @@ function classify(status: number, raw: string, retryAfterHeader: string | null):
   return null;
 }
 
+/** Reasoning models can spend the whole budget before closing the JSON. */
+function isTruncatedJson(raw: string): boolean {
+  return /json_validate_failed|max completion tokens reached/i.test(raw);
+}
+
 /**
  * Node throws a bare TypeError for a failed fetch, but so does a plain coding
  * mistake. Only the real network case should burn a key and move on — anything
@@ -98,6 +103,9 @@ async function callGroq(
     const raw = await res.text();
     const keyError = classify(res.status, raw, res.headers.get("retry-after"));
     if (keyError) throw keyError;
+    if (isTruncatedJson(raw)) {
+      throw new Error("Groq ran out of room before finishing the email. Trying another provider.");
+    }
     throw new Error(`Groq returned ${res.status}: ${raw.slice(0, 300)}`);
   }
 
@@ -160,7 +168,10 @@ async function complete(system: string, user: string): Promise<Written> {
       state,
       system,
       user,
-      1400,
+      // gpt-oss models are reasoning models: they spend tokens thinking before
+      // emitting the JSON. A tight budget gets consumed mid-document and the
+      // request fails with json_validate_failed, so leave real headroom.
+      6000,
       0.5,
     ),
   );
@@ -205,7 +216,7 @@ export async function readWithGroq(text: string, mode: ReadMode): Promise<ReadRe
 
 ${shape}`,
       text,
-      extractOnly ? 2000 : 6000,
+      extractOnly ? 6000 : 12000,
       0.4,
     ),
   );

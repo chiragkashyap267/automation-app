@@ -236,16 +236,18 @@ const groqRead = await readWithGroq("some pasted job text", "extract");
 check("groq reads pasted text into facts", groqRead.jobs[0].company, "Acme");
 check("groq extract omits the email fields", groqRead.jobs[0].subject, undefined);
 check("groq asks for JSON object mode", sentBody.response_format.type, "json_object");
-check(
-  "groq extract budget is smaller than full",
-  sentBody.max_tokens < 6000,
-  true,
-);
+const groqExtractBudget = sentBody.max_tokens;
 
 groqPool.reset();
-globalThis.fetch = async () => groqResponse({ jobs: [okJob] });
+globalThis.fetch = async (_url, init) => {
+  sentBody = JSON.parse(init.body);
+  return groqResponse({ jobs: [okJob] });
+};
 const groqFull = await readWithGroq("text", "full");
 check("groq full mode returns the written email", groqFull.jobs[0].body, "Hi there");
+check("groq extract asks for a smaller budget than full", groqExtractBudget < sentBody.max_tokens, true);
+// Reasoning models spend tokens before the JSON, so both budgets need headroom.
+check("both budgets leave room for reasoning", groqExtractBudget >= 4000, true);
 
 groqPool.reset();
 let groqReadTries = 0;
