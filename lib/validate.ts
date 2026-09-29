@@ -241,12 +241,17 @@ export function validateDraft(draft: Draft, profile: Profile): Issue[] {
     });
   }
 
+  // Thresholds bracket the 60-90 words the writer is asked for.
   const words = countWords(body);
-  if (words && words < 60) {
+  if (words && words < 40) {
     push({ id: "too-short", severity: "warning", message: `Only ${words} words — quite thin.` });
   }
-  if (words > 320) {
-    push({ id: "too-long", severity: "warning", message: `${words} words — most recruiters skim.` });
+  if (words > 150) {
+    push({
+      id: "too-long",
+      severity: "warning",
+      message: `${words} words — long for a cold email. Aim for under 100.`,
+    });
   }
   if (draft.subject.length > 90) {
     push({

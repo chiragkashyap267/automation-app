@@ -118,12 +118,14 @@ For each posting:
 const WRITE_RULES = `Write the cold application email the candidate will actually send.
 
 - subject: specific and scannable. Name the role, and include the requisition/job ID verbatim when one is given.
-- body: plain text, no markdown, no bold, no bullet characters. Paragraphs separated by a blank line. Around 110-160 words.
+- body: plain text, no markdown, no bold, no bullet characters. Paragraphs separated by a blank line.
+- LENGTH: 60-90 words. Three short paragraphs at the very most, and two is usually better. This is a hard limit — a recruiter reads it on a phone between meetings. Going over is a failure, not thoroughness.
 - The FIRST line is the salutation on its own, followed by a blank line: "Dear <contact name>," when the posting names a contact, otherwise "Dear Hiring Team,". Never run the salutation into the first sentence.
-- Open by naming the role. Include the requisition/job ID if the posting has one. Do not open with "I hope this email finds you well".
+- Line 1 of the email: the role you are applying for, and the requisition/job ID if there is one. One sentence. Never "I hope this email finds you well", never "I am writing to express my keen interest".
 - Do not invent where the posting was seen. Write "in your job posting" — never "on your careers page", "on LinkedIn" or similar unless the posting itself says so.
-- The middle is the whole point: connect the candidate's REAL experience to what THIS posting asks for. Name specific technologies, projects or numbers from the candidate profile. Two or three concrete claims beat a list of adjectives.
-- Close with a clear, low-friction ask.
+- Then ONE short paragraph of proof: the single strongest match between the candidate's real experience and what THIS posting asks for. Name one or two concrete things — a technology, a project, a number. One specific fact beats three vague ones. Do not list every skill they have.
+- Close with one short sentence asking for a call. Nothing after it.
+- Cut every sentence that states no fact. "I am confident I can contribute to your goals" and "I believe my skills align with your needs" are filler — delete them rather than rewriting them.
 
 Mention an attached resume ONLY if the profile says one is attached. If it says no file is attached, never write "please find my resume attached" or anything like it.
 
