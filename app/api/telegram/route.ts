@@ -3,6 +3,14 @@ import { readJobs, writeOutreach } from "@/lib/llm";
 import { buildTaskText, companyFromEmail } from "@/lib/llm/prompt";
 import { explainSmtpError, preflight, sendMail } from "@/lib/mailer";
 import { SEED_PROFILE } from "@/lib/seed";
+import {
+  addToBatch,
+  batchingAvailable,
+  clearBatch,
+  loadBatch,
+  setSummaryMessage,
+} from "@/lib/batch";
+import { sendAllInBatch } from "./sendAll";
 import { cleanRecipients } from "@/lib/email";
 import { composeEmail, normalizePlainText } from "@/lib/signature";
 import { EMPTY_PROFILE, type Profile } from "@/lib/types";
@@ -20,6 +28,9 @@ export const maxDuration = 60;
  */
 
 const API = "https://api.telegram.org/bot";
+
+/** Named once so a newline never has to be escaped inline. */
+const NL = String.fromCharCode(10);
 
 type TgUser = { id: number };
 type TgChat = { id: number };
@@ -159,6 +170,23 @@ async function fetchResume(): Promise<ResumeResult | null> {
       contentType: "application/pdf",
     },
   };
+}
+
+async function handleSendAll(
+  chatId: number,
+  summaryMessageId: number,
+  answer: (text: string) => Promise<unknown>,
+) {
+  await sendAllInBatch(chatId, summaryMessageId, {
+    profile: profile(),
+    attachment: async () => {
+      const resume = await fetchResume();
+      return resume?.ok ? resume.attachment : undefined;
+    },
+    edit: (messageId, text) =>
+      tg("editMessageText", { chat_id: chatId, message_id: messageId, text, disable_web_page_preview: true }),
+    answer,
+  });
 }
 
 /** The reply doubles as the store, so its shape has to be parseable. */
@@ -348,6 +376,59 @@ async function handleMessage(message: TgMessage) {
         inline_keyboard: [[{ text: "✉️ Send it", callback_data: "send" }]],
       },
     });
+
+    if (batchingAvailable()) {
+      await addToBatch(chatId, { company: job.company, role: job.role, to: addresses, subject, body });
+    }
+  }
+
+  await refreshSummary(chatId);
+}
+
+/**
+ * Keeps one message at the bottom of the chat showing how many drafts are
+ * waiting, with a single Send-all button. Re-posted rather than edited so it
+ * stays the newest message as more screenshots arrive.
+ */
+async function refreshSummary(chatId: number) {
+  if (!batchingAvailable()) return;
+
+  const batch = await loadBatch(chatId);
+  if (!batch) return;
+
+  const ready = batch.drafts.filter((d) => d.to.length);
+  // With only one draft its own button is enough; a summary would be noise.
+  if (ready.length < 2) return;
+
+  if (batch.summaryMessageId) {
+    await tg("deleteMessage", { chat_id: chatId, message_id: batch.summaryMessageId });
+  }
+
+  const lines = ready.map((d, i) => `${i + 1}. ${d.company || "Unknown"} — ${d.role || "role"}`);
+  const res = await say(
+    chatId,
+    [
+      `📋 ${ready.length} emails ready`,
+      "",
+      lines.join(NL),
+      "",
+      "Send them all, or use each draft's own button.",
+    ].join(NL),
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: `📤 Send all ${ready.length}`, callback_data: "sendall" }],
+          [{ text: "🗑 Clear the batch", callback_data: "clearbatch" }],
+        ],
+      },
+    },
+  );
+
+  try {
+    const body = (await res.json()) as { ok: boolean; result?: { message_id: number } };
+    if (body.ok && body.result) await setSummaryMessage(chatId, body.result.message_id);
+  } catch {
+    /* the summary is a convenience; losing its id only costs a duplicate */
   }
 }
 
@@ -357,6 +438,22 @@ async function handleCallback(query: NonNullable<TgUpdate["callback_query"]>) {
   if (!message || chatId === undefined) return;
 
   const answer = (text: string) => tg("answerCallbackQuery", { callback_query_id: query.id, text });
+
+  if (query.data === "clearbatch") {
+    await clearBatch(chatId);
+    await answer("Batch cleared");
+    await tg("editMessageText", {
+      chat_id: chatId,
+      message_id: message.message_id,
+      text: "🗑 Batch cleared. Nothing was sent.",
+    });
+    return;
+  }
+
+  if (query.data === "sendall") {
+    await handleSendAll(chatId, message.message_id, answer);
+    return;
+  }
 
   const parsed = parseDraft(message.text ?? "");
   if (!parsed) {

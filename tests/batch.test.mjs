@@ -1,0 +1,117 @@
+// Send-all drives real SMTP, so its behaviour is pinned down here against a
+// fake Redis and a fake mail server.
+process.env.UPSTASH_REDIS_REST_URL = "https://fake-redis.local";
+process.env.UPSTASH_REDIS_REST_TOKEN = "fake-token";
+
+const store = new Map();
+
+// Stand in for Upstash's REST API.
+function redisFetch(init) {
+  const [cmd, key, value, , ttl] = JSON.parse(init.body);
+  const reply = (result) => new Response(JSON.stringify({ result }), { status: 200 });
+
+  switch (cmd) {
+    case "GET":
+      return reply(store.has(key) ? store.get(key) : null);
+    case "SET":
+      store.set(key, value);
+      void ttl;
+      return reply("OK");
+    case "DEL":
+      store.delete(key);
+      return reply(1);
+    case "INCR": {
+      const next = Number(store.get(key) ?? 0) + 1;
+      store.set(key, String(next));
+      return reply(next);
+    }
+    case "EXPIRE":
+      return reply(1);
+    default:
+      return reply(null);
+  }
+}
+
+let mailSent = [];
+let failNext = new Set();
+
+globalThis.fetch = async (url, init) => {
+  if (String(url).includes("fake-redis")) return redisFetch(init);
+  throw new Error(`unexpected fetch to ${url}`);
+};
+
+const { sendAllInBatch, addToBatch, loadBatch, sendsToday } = await import("./.batch.bundle.mjs");
+
+let pass = 0, fail = 0;
+const check = (label, actual, expected) => {
+  const ok = JSON.stringify(actual) === JSON.stringify(expected);
+  console.log(`${ok ? "PASS" : "FAIL"}  ${label}${ok ? "" : `\n        got ${JSON.stringify(actual)} want ${JSON.stringify(expected)}`}`);
+  ok ? pass++ : fail++;
+};
+
+const CHAT = 111;
+const PROFILE = {
+  gmailUser: "me@gmail.com", gmailAppPassword: "abcd1234abcd1234",
+  fullName: "Chirag", email: "me@gmail.com", ccSelf: false,
+};
+
+function draft(company, to) {
+  return {
+    company, role: "Dev", to: [to],
+    subject: `${company} application`,
+    body: "Dear Hiring Team,\n\nI would like to apply.\n\nBest regards,\nChirag",
+  };
+}
+
+// The mailer is swapped out so nothing leaves the machine.
+const deps = (edits) => ({
+  profile: PROFILE,
+  attachment: async () => undefined,
+  edit: async (id, text) => edits.push(text),
+  answer: async (text) => edits.push(`[toast] ${text}`),
+  send,
+});
+
+// Injected rather than aliased, so no SMTP connection is ever possible here.
+const send = async (req) => {
+  if (failNext.has(req.to[0])) throw new Error("550 mailbox unavailable");
+  mailSent.push(req.to[0]);
+  return "<id@local>";
+};
+
+await addToBatch(CHAT, draft("Acme", "a@acme.com"));
+await addToBatch(CHAT, draft("Globex", "b@globex.com"));
+await addToBatch(CHAT, draft("Initech", "c@initech.com"));
+check("three drafts accumulate across messages", (await loadBatch(CHAT)).drafts.length, 3);
+
+await addToBatch(CHAT, draft("Acme", "a@acme.com"));
+check("the same posting twice is not duplicated", (await loadBatch(CHAT)).drafts.length, 3);
+
+let edits = [];
+mailSent = [];
+await sendAllInBatch(CHAT, 1, deps(edits));
+check("all three are sent", mailSent.length, 3);
+check("each went to its own recipient", mailSent.sort(), ["a@acme.com", "b@globex.com", "c@initech.com"]);
+check("the summary reports success", /Sent 3 of 3/.test(edits.join(" ")), true);
+check("the batch is emptied afterwards", await loadBatch(CHAT), null);
+check("the daily counter advanced", await sendsToday(CHAT), 3);
+
+// One bad address must not stop the others.
+edits = [];
+mailSent = [];
+failNext = new Set(["b@globex.com"]);
+await addToBatch(CHAT, draft("Acme", "a@acme.com"));
+await addToBatch(CHAT, draft("Globex", "b@globex.com"));
+await addToBatch(CHAT, draft("Initech", "c@initech.com"));
+await sendAllInBatch(CHAT, 1, deps(edits));
+check("a failure does not stop the batch", mailSent.length, 2);
+check("the failure is reported", /Sent 2 of 3/.test(edits.join(" ")), true);
+check("the failing one is named", /Globex/.test(edits.join(" ")), true);
+
+// Nothing to send.
+edits = [];
+await sendAllInBatch(CHAT, 1, deps(edits));
+check("an empty batch says so", /Nothing left/.test(edits.join(" ")), true);
+
+console.log(`\n${pass} passed, ${fail} failed`);
+process.exit(fail ? 1 : 0);
