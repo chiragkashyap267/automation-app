@@ -11,6 +11,9 @@ import type { MetadataRoute } from "next";
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {
+    // An explicit id keeps Chrome from reusing whatever it cached for an
+    // earlier bookmark-style install of the same start_url.
+    id: "/?app=jdmailer",
     name: "JD Mailer",
     short_name: "JD Mailer",
     description: "Turn job descriptions into sent application emails.",
