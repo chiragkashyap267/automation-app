@@ -67,6 +67,7 @@ export default function HomePage() {
   const [runMode, setRunMode] = useState<RunMode>("auto");
   const [stage, setStage] = useState("");
   const [recipeCount, setRecipeCount] = useState(0);
+  const [shareNote, setShareNote] = useState("");
 
   const refreshConfig = useCallback(async () => {
     try {
@@ -94,6 +95,48 @@ export default function HomePage() {
   useEffect(() => {
     saveDrafts(drafts);
   }, [drafts]);
+
+  // Arriving from another app's share sheet: Android puts the shared post in
+  // the query string. Pick it up once, then clean the URL so a refresh does
+  // not add it twice.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const title = params.get("share_title") ?? "";
+    const text = params.get("share_text") ?? "";
+    const url = params.get("share_url") ?? "";
+    if (!title && !text && !url) return;
+
+    window.history.replaceState({}, "", window.location.pathname);
+
+    const shared = [title, text, url].filter(Boolean).join("\n").trim();
+    const wordCount = shared.split(/\s+/).filter(Boolean).length;
+    const looksLikeBareLink = /^https?:\/\/\S+$/.test(shared);
+
+    if (looksLikeBareLink || wordCount < 12) {
+      // LinkedIn shares a job *listing* as a link, and the page behind it
+      // needs a login, so there is nothing here to read.
+      setShareNote(
+        "That share only contained a link, not the job text. Open the post, select the text and share that — or take a screenshot.",
+      );
+      return;
+    }
+
+    // setItems directly rather than addText, so this effect does not depend on
+    // a callback declared further down.
+    setItems((prev) => [
+      ...prev,
+      {
+        id: newId(),
+        kind: "text",
+        data: "",
+        mediaType: "",
+        text: shared,
+        preview: "",
+        groupId: newId(),
+      },
+    ]);
+    setShareNote("Added from share. Check it looks complete, then write the email.");
+  }, []);
 
   const pickRunMode = useCallback((value: RunMode) => {
     setRunMode(value);
@@ -434,6 +477,8 @@ export default function HomePage() {
           {savings}
         </p>
       )}
+
+      {shareNote && <Banner tone="accent">{shareNote}</Banner>}
 
       {error && <Banner tone="danger">{error}</Banner>}
 

@@ -104,6 +104,62 @@ export function applyReplyResults(
   return rows;
 }
 
+/**
+ * Gmail allows roughly 500 recipients a day on a free account, but the number
+ * that matters is far lower: a sudden burst of near-identical mail to
+ * strangers is what gets an account flagged, not the raw count. These limits
+ * keep a day's sending inside what a person plausibly types by hand.
+ */
+export const DAILY_SOFT_LIMIT = 40;
+export const DAILY_HARD_LIMIT = 80;
+
+export type SendGuard = {
+  sentToday: number;
+  remaining: number;
+  /** Past the soft limit: warn, but let it through. */
+  warn: boolean;
+  /** Past the hard limit: refuse for today. */
+  block: boolean;
+  message: string;
+};
+
+export function checkSendGuard(extra = 0): SendGuard {
+  const dayAgo = Date.now() - 24 * 60 * 60 * 1000;
+  const sentToday = loadHistory().filter((r) => r.sentAt > dayAgo).length;
+  const projected = sentToday + extra;
+
+  const block = projected > DAILY_HARD_LIMIT;
+  const warn = !block && projected > DAILY_SOFT_LIMIT;
+
+  let message = "";
+  if (block) {
+    message =
+      `That would put you at ${projected} emails in 24 hours. Gmail treats bursts of similar ` +
+      `mail to strangers as spam, and the account is worth more than the extra applications. ` +
+      `Send the rest tomorrow.`;
+  } else if (warn) {
+    message =
+      `${projected} emails in 24 hours. Still within Gmail's limits, but keep an eye on it — ` +
+      `volume plus similarity is what gets accounts flagged.`;
+  }
+
+  return {
+    sentToday,
+    remaining: Math.max(0, DAILY_HARD_LIMIT - sentToday),
+    warn,
+    block,
+    message,
+  };
+}
+
+/** Bounces hurt sender reputation, so a run of them is worth stopping for. */
+export function recentBounceRate(): { bounced: number; sent: number; high: boolean } {
+  const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+  const recent = loadHistory().filter((r) => r.sentAt > weekAgo);
+  const bounced = recent.filter((r) => r.reply === "bounced").length;
+  return { bounced, sent: recent.length, high: recent.length >= 10 && bounced / recent.length > 0.2 };
+}
+
 export function clearHistory() {
   try {
     window.localStorage.removeItem(KEY);

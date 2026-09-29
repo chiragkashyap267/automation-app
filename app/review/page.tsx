@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { buildSignature, composeEmail } from "@/lib/signature";
-import { recordSent } from "@/lib/history";
+import { checkSendGuard, recordSent } from "@/lib/history";
 import { learnFromSend } from "@/lib/pipeline";
 import { editRatio } from "@/lib/recipes";
 import { canSend, loadDrafts, saveDrafts, useProfile } from "@/lib/store";
@@ -19,6 +19,7 @@ export default function ReviewPage() {
   const [sending, setSending] = useState(false);
   const [cursor, setCursor] = useState(0);
   const [finished, setFinished] = useState(false);
+  const [guardMessage, setGuardMessage] = useState("");
 
   useEffect(() => {
     setDrafts(loadDrafts());
@@ -52,6 +53,16 @@ export default function ReviewPage() {
 
   async function sendAll() {
     if (!sendableNow.length || sending) return;
+
+    const guard = checkSendGuard(sendableNow.length);
+    if (guard.block) {
+      setGuardMessage(guard.message);
+      return;
+    }
+    if (guard.warn && !window.confirm(`${guard.message}
+
+Send anyway?`)) return;
+    setGuardMessage("");
     setSending(true);
     setFinished(false);
     setCursor(0);
@@ -194,6 +205,14 @@ export default function ReviewPage() {
           style={{ background: "var(--surface)", borderColor: "var(--border)" }}
         >
           <div className="mx-auto max-w-[640px]">
+            {guardMessage && (
+              <p
+                className="mb-2 rounded-lg px-3 py-2 text-center text-[12.5px] font-semibold leading-relaxed"
+                style={{ background: "var(--danger-soft)", color: "var(--danger)" }}
+              >
+                {guardMessage}
+              </p>
+            )}
             {blocked.length > 0 && (
               <p
                 className="mb-2 rounded-lg px-3 py-2 text-center text-[12.5px] font-semibold"
