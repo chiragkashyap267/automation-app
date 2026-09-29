@@ -11,3 +11,4 @@ tests/.email.bundle.mjs
 tests/.guard.bundle.mjs
 tests/.claims.bundle.mjs
 tests/.ab.bundle.mjs
+tests/.revise.bundle.mjs

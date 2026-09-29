@@ -37,6 +37,7 @@ type ProviderInfo = {
   writer: string | null;
   gemini: { total: number; available: number } | null;
   groq: { total: number; available: number } | null;
+  cerebras: { total: number; available: number } | null;
 };
 
 async function pooled<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]> {
@@ -74,7 +75,7 @@ export default function HomePage() {
       const response = await fetch("/api/config");
       setInfo((await response.json()) as ProviderInfo);
     } catch {
-      setInfo({ visionReader: null, textReader: null, writer: null, gemini: null, groq: null });
+      setInfo({ visionReader: null, textReader: null, writer: null, gemini: null, groq: null, cerebras: null });
     } finally {
       setLoadedConfig(true);
     }
@@ -349,7 +350,7 @@ export default function HomePage() {
         </div>
       </header>
 
-      {loadedConfig && info && (info.gemini || info.groq) && (
+      {loadedConfig && info && (info.gemini || info.groq || info.cerebras) && (
         <div className="mb-3 flex flex-wrap gap-1.5">
           {info.gemini && (
             <span className="chip" style={{ background: "var(--accent-soft)", color: "var(--accent)" }}>
@@ -359,6 +360,11 @@ export default function HomePage() {
           {info.groq && (
             <span className="chip" style={{ background: "var(--accent-soft)", color: "var(--accent)" }}>
               Groq {info.groq.available}/{info.groq.total} keys
+            </span>
+          )}
+          {info.cerebras && (
+            <span className="chip" style={{ background: "var(--accent-soft)", color: "var(--accent)" }}>
+              Cerebras {info.cerebras.available}/{info.cerebras.total} keys
             </span>
           )}
           {recipeCount > 0 && (

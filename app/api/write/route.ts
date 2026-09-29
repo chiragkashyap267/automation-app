@@ -28,8 +28,8 @@ export async function POST(request: Request) {
   }
 
   try {
-    const { written, writer } = await writeEmail(profile, parsed.data);
-    return NextResponse.json({ ...written, writer });
+    const { written, writer, revised } = await writeEmail(profile, parsed.data);
+    return NextResponse.json({ ...written, writer, revised });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Could not write this email.";
     console.error("[write]", message);

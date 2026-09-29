@@ -147,3 +147,4 @@ export function markSuccess(state: KeyState) {
 
 export const geminiPool = createKeyPool("GEMINI_API_KEY");
 export const groqPool = createKeyPool("GROQ_API_KEY");
+export const cerebrasPool = createKeyPool("CEREBRAS_API_KEY");

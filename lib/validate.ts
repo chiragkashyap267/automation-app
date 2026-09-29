@@ -204,16 +204,17 @@ function knownNames(corpus: string, body: string): string[] {
   return [...new Set(candidates)].filter((name) => corpus.includes(name.toLowerCase()));
 }
 
-export function unsupportedClaims(draft: Draft, profile: Profile): string[] {
+/** Works on raw text so the server can run it before an email ever reaches a draft. */
+export function unsupportedClaimsIn(body: string, profile: Profile): string[] {
   const corpus = profileCorpus(profile);
   if (corpus.trim().length < 40) return [];
 
-  const names = knownNames(corpus, draft.body);
+  const names = knownNames(corpus, body);
   if (!names.length) return [];
 
   const found = new Set<string>();
 
-  for (const sentence of draft.body.split(/(?<=[.!?])\s+/)) {
+  for (const sentence of body.split(/(?<=[.!?])\s+/)) {
     const lower = sentence.toLowerCase();
     // Only sentences that tie something to a real employer or project matter.
     if (!names.some((name) => sentence.includes(name))) continue;
@@ -225,6 +226,10 @@ export function unsupportedClaims(draft: Draft, profile: Profile): string[] {
   }
 
   return [...found];
+}
+
+export function unsupportedClaims(draft: Draft, profile: Profile): string[] {
+  return unsupportedClaimsIn(draft.body, profile);
 }
 
 export function validateDraft(draft: Draft, profile: Profile): Issue[] {

@@ -1,6 +1,8 @@
 import {
   EXTRACT_SYSTEM_PROMPT,
   OUTREACH_SYSTEM_PROMPT,
+  REVISE_SYSTEM_PROMPT,
+  buildReviseText,
   buildOutreachText,
   type OutreachTarget,
   ExtractSchema,
@@ -226,4 +228,18 @@ ${shape}`,
     throw new Error("Groq returned JSON that did not match the expected shape.");
   }
   return result.data as ReadResult;
+}
+
+export function reviseWithGroq(
+  profile: Profile,
+  facts: Facts,
+  draft: Written,
+  problems: string[],
+): Promise<Written> {
+  return complete(
+    `${REVISE_SYSTEM_PROMPT}
+
+${JSON_SHAPE}`,
+    buildReviseText(profile, facts, draft, problems),
+  );
 }

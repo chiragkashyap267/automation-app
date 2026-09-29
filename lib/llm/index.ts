@@ -1,7 +1,9 @@
-import { outreachWithClaude, runClaude, writeWithClaude } from "./claude";
-import { outreachWithGemini, runGemini, writeWithGemini } from "./gemini";
-import { outreachWithGroq, readWithGroq, writeWithGroq } from "./groq";
-import { geminiPool, groqPool } from "./keyPool";
+import { outreachWithClaude, reviseWithClaude, runClaude, writeWithClaude } from "./claude";
+import { outreachWithGemini, reviseWithGemini, runGemini, writeWithGemini } from "./gemini";
+import { outreachWithGroq, readWithGroq, reviseWithGroq, writeWithGroq } from "./groq";
+import { outreachWithCerebras, reviseWithCerebras, writeWithCerebras } from "./cerebras";
+import { cerebrasPool, geminiPool, groqPool } from "./keyPool";
+import { unsupportedClaimsIn } from "@/lib/validate";
 import type { Facts, OutreachTarget, Written } from "./prompt";
 import type { Profile } from "@/lib/types";
 
@@ -20,7 +22,7 @@ export type ReadResult = { jobs: ReadJob[] };
 
 export type VisionReader = "claude" | "gemini";
 export type TextReader = VisionReader | "groq";
-export type WriterName = "groq" | "claude" | "gemini";
+export type WriterName = "groq" | "cerebras" | "claude" | "gemini";
 
 /** Screenshots need a model that can see. */
 export function activeVisionReader(): VisionReader | null {
@@ -59,10 +61,7 @@ export function visionReaders(): VisionReader[] {
 
 /** Writing never sees an image, so the fast free provider goes first. */
 export function activeWriter(): WriterName | null {
-  if (groqPool.count() > 0) return "groq";
-  if (process.env.ANTHROPIC_API_KEY) return "claude";
-  if (geminiPool.count() > 0) return "gemini";
-  return null;
+  return writers()[0] ?? null;
 }
 
 export function providerStatus() {
@@ -72,6 +71,7 @@ export function providerStatus() {
     writer: activeWriter(),
     gemini: geminiPool.count() > 0 ? geminiPool.status() : null,
     groq: groqPool.count() > 0 ? groqPool.status() : null,
+    cerebras: cerebrasPool.count() > 0 ? cerebrasPool.status() : null,
   };
 }
 
@@ -117,13 +117,70 @@ export async function readJobs(
   throw firstError instanceof Error ? firstError : new Error("Could not read this job description.");
 }
 
-/** Writers in preference order, so one spent pool can fall through to another. */
+/**
+ * Writers in preference order. WRITER_ORDER overrides it — "gemini,groq" for
+ * instance — so the default can be changed without a deploy of new code.
+ */
 function writers(): WriterName[] {
-  const list: WriterName[] = [];
-  if (groqPool.count() > 0) list.push("groq");
-  if (process.env.ANTHROPIC_API_KEY) list.push("claude");
-  if (geminiPool.count() > 0) list.push("gemini");
-  return list;
+  const available = new Set<WriterName>();
+  if (groqPool.count() > 0) available.add("groq");
+  if (cerebrasPool.count() > 0) available.add("cerebras");
+  if (process.env.ANTHROPIC_API_KEY) available.add("claude");
+  if (geminiPool.count() > 0) available.add("gemini");
+
+  const preferred = (process.env.WRITER_ORDER ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter((s): s is WriterName => available.has(s as WriterName));
+
+  // Anything configured comes first; the rest still act as fallbacks.
+  return [...new Set([...preferred, ...available])];
+}
+
+const MIN_WORDS = 45;
+const MAX_WORDS = 130;
+
+/**
+ * Checks the finished email against the profile locally — free and instant —
+ * and only pays for a second model call when something is actually wrong.
+ * In the common case this costs nothing at all.
+ */
+function problemsWith(written: Written, profile: Profile): string[] {
+  const problems: string[] = [];
+
+  const invented = unsupportedClaimsIn(written.body, profile);
+  if (invented.length) {
+    problems.push(
+      `The email claims "${invented.join('", "')}" at a named employer. None of that appears in ` +
+        `the resume. Remove those claims, or replace them with something the resume actually says.`,
+    );
+  }
+
+  const words = written.body.trim().split(/\s+/).filter(Boolean).length;
+  if (words > MAX_WORDS) problems.push(`The body is ${words} words. Cut it to 60-90.`);
+  if (words < MIN_WORDS) problems.push(`The body is only ${words} words. It needs more substance.`);
+
+  if (/(best regards|sincerely|kind regards|warm regards)/i.test(written.body)) {
+    problems.push("The body ends with a sign-off. Remove it — one is appended automatically.");
+  }
+  if (/\[(?:your|company|role|name)[^\]]*\]/i.test(written.body + written.subject)) {
+    problems.push("There is an unfilled placeholder. Replace it with real text.");
+  }
+
+  return problems;
+}
+
+async function reviseWith(
+  writer: WriterName,
+  profile: Profile,
+  facts: Facts,
+  draft: Written,
+  problems: string[],
+): Promise<Written> {
+  if (writer === "groq") return reviseWithGroq(profile, facts, draft, problems);
+  if (writer === "cerebras") return reviseWithCerebras(profile, facts, draft, problems);
+  if (writer === "claude") return reviseWithClaude(profile, facts, draft, problems);
+  return reviseWithGemini(profile, facts, draft, problems);
 }
 
 /**
@@ -143,9 +200,11 @@ export async function writeOutreach(
       const written =
         writer === "groq"
           ? await outreachWithGroq(profile, target)
-          : writer === "claude"
-            ? await outreachWithClaude(profile, target)
-            : await outreachWithGemini(profile, target);
+          : writer === "cerebras"
+            ? await outreachWithCerebras(profile, target)
+            : writer === "claude"
+              ? await outreachWithClaude(profile, target)
+              : await outreachWithGemini(profile, target);
       return { written, writer };
     } catch (err) {
       firstError ??= err;
@@ -159,32 +218,45 @@ export async function writeOutreach(
 export async function writeEmail(
   profile: Profile,
   facts: Facts,
-): Promise<{ written: Written; writer: WriterName }> {
-  const writer = activeWriter();
-  if (!writer) throw new Error("No key that can write emails is set.");
+): Promise<{ written: Written; writer: WriterName; revised: boolean }> {
+  const candidates = writers();
+  if (!candidates.length) throw new Error("No key that can write emails is set.");
 
-  if (writer === "groq") {
+  let firstError: unknown;
+
+  for (const writer of candidates) {
+    let written: Written;
     try {
-      return { written: await writeWithGroq(profile, facts), writer };
+      written =
+        writer === "groq"
+          ? await writeWithGroq(profile, facts)
+          : writer === "cerebras"
+            ? await writeWithCerebras(profile, facts)
+            : writer === "claude"
+              ? await writeWithClaude(profile, facts)
+              : await writeWithGemini(profile, facts);
     } catch (err) {
-      // Groq is the free path; if its whole pool is spent, fall back rather than fail.
-      const fallback = process.env.ANTHROPIC_API_KEY
-        ? ("claude" as const)
-        : geminiPool.count() > 0
-          ? ("gemini" as const)
-          : null;
-      if (!fallback) throw err;
-      const written =
-        fallback === "claude"
-          ? await writeWithClaude(profile, facts)
-          : await writeWithGemini(profile, facts);
-      return { written, writer: fallback };
+      firstError ??= err;
+      console.error(`[write] ${writer} failed, trying next`, err instanceof Error ? err.message : err);
+      continue;
     }
+
+    const problems = problemsWith(written, profile);
+    if (!problems.length) return { written, writer, revised: false };
+
+    console.warn(`[write] ${writer} produced ${problems.length} problem(s), revising`);
+    try {
+      const fixed = await reviseWith(writer, profile, facts, written, problems);
+      // Keep the revision only if it actually improved matters.
+      if (problemsWith(fixed, profile).length < problems.length) {
+        return { written: fixed, writer, revised: true };
+      }
+    } catch (err) {
+      console.error("[write] revision failed", err instanceof Error ? err.message : err);
+    }
+
+    return { written, writer, revised: false };
   }
 
-  const written =
-    writer === "claude"
-      ? await writeWithClaude(profile, facts)
-      : await writeWithGemini(profile, facts);
-  return { written, writer };
+  throw firstError instanceof Error ? firstError : new Error("Could not write this email.");
 }

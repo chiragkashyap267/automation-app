@@ -6,6 +6,8 @@ import {
   FULL_SYSTEM_PROMPT,
   JobsSchema,
   OUTREACH_SYSTEM_PROMPT,
+  REVISE_SYSTEM_PROMPT,
+  buildReviseText,
   WRITE_SYSTEM_PROMPT,
   buildOutreachText,
   type OutreachTarget,
@@ -99,4 +101,13 @@ export function writeWithClaude(profile: Profile, facts: Facts): Promise<Written
 
 export function outreachWithClaude(profile: Profile, target: OutreachTarget): Promise<Written> {
   return complete(OUTREACH_SYSTEM_PROMPT, buildOutreachText(profile, target));
+}
+
+export function reviseWithClaude(
+  profile: Profile,
+  facts: Facts,
+  draft: Written,
+  problems: string[],
+): Promise<Written> {
+  return complete(REVISE_SYSTEM_PROMPT, buildReviseText(profile, facts, draft, problems));
 }

@@ -242,6 +242,29 @@ Mention an attached resume ONLY if the profile says one is attached.
 
 CRITICAL — do NOT write a sign-off, your name, phone, email, or links at the end. The body must STOP at the closing ask. A signature is appended automatically.`;
 
+export const REVISE_SYSTEM_PROMPT = `You are correcting a draft application email that failed a check. Return the corrected subject and body.
+
+Fix ONLY what the problems list says is wrong. Do not restyle, re-order or "improve" anything else — the rest of the email has already been approved.
+
+When a claim is unsupported, you cannot simply soften it. Delete it, or replace it with something the resume actually says. "Helped ensure quality" is the same lie as "wrote test cases" if the resume mentions neither.
+
+Keep every rule of the original: 60-90 words, salutation on its own first line, no sign-off, no name, no links, no markdown, plain text only.`;
+
+export function buildReviseText(
+  profile: Profile,
+  facts: Facts,
+  draft: Written,
+  problems: string[],
+): string {
+  return [
+    buildProfileBlock(profile),
+    `\n\nTHE POSTING\nCompany: ${facts.company || "(not stated)"}\nRole: ${facts.role || "(not stated)"}`,
+    `\n\nTHE DRAFT\nSubject: ${draft.subject}\n\n${draft.body}`,
+    `\n\nPROBLEMS TO FIX\n${problems.map((p, i) => `${i + 1}. ${p}`).join("\n")}`,
+    "\n\nReturn the corrected subject and body.",
+  ].join("");
+}
+
 export function buildOutreachText(profile: Profile, target: OutreachTarget): string {
   const about = [
     `Sending to: ${target.email}`,

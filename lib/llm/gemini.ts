@@ -6,6 +6,8 @@ import {
   GEMINI_FULL_SCHEMA,
   JobsSchema,
   OUTREACH_SYSTEM_PROMPT,
+  REVISE_SYSTEM_PROMPT,
+  buildReviseText,
   WRITE_SYSTEM_PROMPT,
   buildOutreachText,
   type OutreachTarget,
@@ -234,4 +236,13 @@ export function writeWithGemini(profile: Profile, facts: Facts): Promise<Written
 
 export function outreachWithGemini(profile: Profile, target: OutreachTarget): Promise<Written> {
   return complete(OUTREACH_SYSTEM_PROMPT, buildOutreachText(profile, target));
+}
+
+export function reviseWithGemini(
+  profile: Profile,
+  facts: Facts,
+  draft: Written,
+  problems: string[],
+): Promise<Written> {
+  return complete(REVISE_SYSTEM_PROMPT, buildReviseText(profile, facts, draft, problems));
 }
