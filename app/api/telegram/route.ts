@@ -196,6 +196,7 @@ const HELP = `Two things I can do.
    This writes a short "do you have openings?" email instead.`;
 
 const EMAIL_ONLY = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const BARE_URL = /^\s*https?:\/\/\S+\s*$/i;
 
 /** "/ask hr@co.com Backend Engineer" or just a bare address. */
 function parseAsk(text: string): { email: string; role: string } | null {
@@ -245,6 +246,20 @@ async function handleMessage(message: TgMessage) {
   const text = (message.text ?? message.caption ?? "").trim();
   if (/^\/(start|help)\b/.test(text)) {
     await say(chatId, HELP);
+    return;
+  }
+
+  // A link on its own has nothing to read. LinkedIn in particular serves job
+  // pages to logged-out visitors with the description stripped out, so there
+  // is no posting text and no address behind the link — say so rather than
+  // feeding a URL to the model and returning nonsense.
+  if (!message.photo?.length && BARE_URL.test(text)) {
+    await say(
+      chatId,
+      /linkedin\.com|nkd\.in|lnkd\.in/i.test(text)
+        ? "I cannot read a LinkedIn link — the page hides the job text and the contact address from anyone not logged in.\n\nScreenshot the posting and send me the image instead. That works well."
+        : "That is just a link, and I cannot open pages. Send a screenshot of the posting, or paste the text.",
+    );
     return;
   }
 
