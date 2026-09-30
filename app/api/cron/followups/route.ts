@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { buildDigest } from "@/lib/digest";
 import { describeCandidates, isWorkday } from "@/lib/followup";
 import { findQuiet, reviewInbox } from "@/lib/followupRun";
+import { fetchResume } from "@/lib/resumeFetch";
 import { sendQueued } from "@/lib/schedule";
 import { loadBotProfile } from "@/lib/sharedProfile";
 import { botConfigured, primaryChatId, say } from "@/lib/telegramApi";
@@ -53,7 +54,12 @@ export async function GET(request: Request) {
   //    request came from Vercel rather than from whoever found the URL.
   let justSent = 0;
   if (process.env.CRON_SECRET?.trim()) {
-    const flushed = await sendQueued(chatId, profile);
+    const flushed = await sendQueued(chatId, profile, {
+      attachment: async (draft) => {
+        const resume = await fetchResume(draft.role, profile.fullName);
+        return resume?.ok ? resume.attachment : undefined;
+      },
+    });
     justSent = flushed.sent;
 
     if (flushed.refused) {

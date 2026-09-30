@@ -19,3 +19,4 @@ tests/.newfeatures.bundle.mjs
 tests/.followups.bundle.mjs
 tests/.ocr.bundle.mjs
 tests/.schedule.bundle.mjs
+tests/.resume.bundle.mjs

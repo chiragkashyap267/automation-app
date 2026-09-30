@@ -5,7 +5,9 @@ import type { Profile } from "@/lib/types";
 
 export type SendAllDeps = {
   profile: Profile;
-  attachment: () => Promise<{ filename: string; content: Buffer; contentType: string } | undefined>;
+  attachment: (draft: {
+    role: string;
+  }) => Promise<{ filename: string; content: Buffer; contentType: string } | undefined>;
   edit: (messageId: number, text: string) => Promise<unknown>;
   answer: (text: string) => Promise<unknown>;
   send?: (req: MailRequest) => Promise<string>;

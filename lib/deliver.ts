@@ -15,7 +15,8 @@ import type { Profile } from "./types";
 export const GAP_MS = 900;
 
 export type DeliverDeps = {
-  attachment?: () => Promise<MailRequest["attachment"]>;
+  /** Per draft, so the resume can match the role being applied for. */
+  attachment?: (draft: BatchDraft) => Promise<MailRequest["attachment"]>;
   /**
    * Injected so tests can exercise the whole loop without a bundler alias —
    * and so a test can never open a real SMTP connection by accident.
@@ -63,7 +64,6 @@ export async function deliverDrafts(
     };
   }
 
-  const file = attachment ? await attachment() : undefined;
   const results: string[] = [];
   let sent = 0;
 
@@ -71,6 +71,7 @@ export async function deliverDrafts(
     const draft = queue[i];
     const label = `${draft.company || "Unknown"} — ${draft.role || "role"}`;
 
+    const file = attachment ? await attachment(draft) : undefined;
     const problem = preflight({ to: draft.to, subject: draft.subject, text: draft.body });
     if (problem) {
       results.push(`✕ ${label} — ${problem}`);
@@ -87,6 +88,8 @@ export async function deliverDrafts(
         replyTo: profile.email || undefined,
         subject: draft.subject,
         text: draft.body,
+        inReplyTo: draft.inReplyTo || undefined,
+        references: draft.inReplyTo || undefined,
         attachment: file,
       });
       sent += 1;

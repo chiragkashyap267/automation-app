@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { explainSmtpError, preflight, sendMail } from "@/lib/mailer";
 import { recordOutbound } from "@/lib/outbox";
+import { resumeFileNameFor } from "@/lib/resume";
 import { EMPTY_PROFILE, type Profile } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -55,7 +56,13 @@ export async function POST(request: Request) {
       attachment:
         payload.attachResume && profile.resumeFileData
           ? {
-              filename: profile.resumeFileName || "resume.pdf",
+              // Named for the role, because a recruiter’s folder is full of
+              // files called resume.pdf.
+              filename: resumeFileNameFor(
+                profile.fullName,
+                payload.meta?.role ?? "",
+                profile.resumeFileName || "resume.pdf",
+              ),
               content: Buffer.from(profile.resumeFileData, "base64"),
               contentType: profile.resumeFileType || "application/pdf",
             }

@@ -15,6 +15,11 @@ import {
 } from "@/lib/batch";
 import { sendAllInBatch } from "./sendAll";
 import { cleanRecipients } from "@/lib/email";
+import { explainImapError } from "@/lib/inboxScan";
+import { scanForPostings } from "@/lib/inboxJobs";
+import { replySubject } from "@/lib/followup";
+import { fetchResume, resumeFilename } from "@/lib/resumeFetch";
+import { resumeVariants } from "@/lib/resume";
 import { unsupportedClaimsIn } from "@/lib/validate";
 import { describeCandidates } from "@/lib/followup";
 import { findQuiet, sendFollowUps } from "@/lib/followupRun";
@@ -92,77 +97,16 @@ async function fetchImage(fileId: string): Promise<{ mediaType: string; data: st
  * returns 86 KB of HTML that, attached as resume.pdf, simply will not open.
  * Rewrite the common ones to their direct-download form.
  */
-export function resolveResumeUrl(url: string): string {
-  const drive = url.match(/drive\.google\.com\/file\/d\/([\w-]+)/);
-  if (drive) return `https://drive.google.com/uc?export=download&id=${drive[1]}`;
-
-  const driveOpen = url.match(/drive\.google\.com\/open\?id=([\w-]+)/);
-  if (driveOpen) return `https://drive.google.com/uc?export=download&id=${driveOpen[1]}`;
-
-  const docs = url.match(/docs\.google\.com\/document\/d\/([\w-]+)/);
-  if (docs) return `https://docs.google.com/document/d/${docs[1]}/export?format=pdf`;
-
-  if (/dropbox\.com/.test(url)) {
-    const stripped = url.replace(/[?&]dl=[01]/g, "");
-    return `${stripped}${stripped.includes("?") ? "&" : "?"}dl=1`;
-  }
-
-  return url;
-}
-
-/** A name a mail client will open without arguing. */
-export function resumeFilename(): string {
-  const raw = (process.env.RESUME_FILENAME || "resume").trim();
-  return /\.pdf$/i.test(raw) ? raw : `${raw}.pdf`;
-}
-
-type ResumeResult =
-  | { ok: true; attachment: { filename: string; content: Buffer; contentType: string } }
-  | { ok: false; reason: string };
-
-async function fetchResume(): Promise<ResumeResult | null> {
-  const configured = process.env.RESUME_URL?.trim();
-  if (!configured) return null;
-
-  const url = resolveResumeUrl(configured);
-
-  let buffer: Buffer;
-  try {
-    const res = await fetch(url, { redirect: "follow" });
-    if (!res.ok) return { ok: false, reason: `the resume URL returned ${res.status}` };
-    buffer = Buffer.from(await res.arrayBuffer());
-  } catch {
-    return { ok: false, reason: "the resume URL could not be reached" };
-  }
-
-  // Trust the bytes, not the URL or the content-type header.
-  if (buffer.subarray(0, 5).toString("latin1") !== "%PDF-") {
-    return {
-      ok: false,
-      reason:
-        "that link returns a web page, not a PDF. Use the file's direct-download link, and make sure it is shared with 'Anyone with the link'",
-    };
-  }
-
-  return {
-    ok: true,
-    attachment: {
-      filename: resumeFilename(),
-      content: buffer,
-      contentType: "application/pdf",
-    },
-  };
-}
-
 async function handleSendAll(
   chatId: number,
   summaryMessageId: number,
   answer: (text: string) => Promise<unknown>,
 ) {
+  const me = await profile();
   await sendAllInBatch(chatId, summaryMessageId, {
-    profile: await profile(),
-    attachment: async () => {
-      const resume = await fetchResume();
+    profile: me,
+    attachment: async (draft) => {
+      const resume = await fetchResume(draft.role, me.fullName);
       return resume?.ok ? resume.attachment : undefined;
     },
     edit: (messageId, text) =>
@@ -244,6 +188,9 @@ async function handleStatus(chatId: number) {
     `  gmail: ${me.gmailUser || "GMAIL_USER not set"}`,
     `  password: ${me.gmailAppPassword ? "set" : "GMAIL_APP_PASSWORD not set"}`,
     `  resume: ${process.env.RESUME_URL?.trim() ? "from RESUME_URL" : "none attached"}`,
+    ...(resumeVariants().length
+      ? [`  role-specific: ${resumeVariants().map((v) => v.keyword).join(", ")}`]
+      : []),
   ];
 
   if (!batchingAvailable()) {
@@ -297,14 +244,153 @@ async function handleQueue(chatId: number) {
   );
 }
 
+/**
+ * Job descriptions that were emailed straight to the inbox.
+ *
+ * These are the best leads there are: the sender is already the right person
+ * to answer, which is exactly what a screenshot of a posting so often lacks.
+ * The reply goes back inside their own thread rather than arriving cold.
+ */
+async function handleInbox(chatId: number) {
+  const me = await profile();
+  if (!me.gmailUser || !me.gmailAppPassword) {
+    await say(chatId, "GMAIL_USER and GMAIL_APP_PASSWORD are not set on the server.");
+    return;
+  }
+
+  await say(chatId, "Reading the last week of mail…");
+
+  // Never treat a thread we started as somebody else's posting.
+  const known = new Set(
+    (await loadOutbox())
+      .map((e) => e.messageId.replace(/^<|>$/g, "").toLowerCase())
+      .filter(Boolean),
+  );
+
+  let found;
+  try {
+    found = await scanForPostings(
+      { user: me.gmailUser, pass: me.gmailAppPassword },
+      { skipMessageIds: known },
+    );
+  } catch (err) {
+    const raw = err instanceof Error ? err.message : String(err);
+    await say(chatId, `⚠️ ${explainImapError(raw).slice(0, 300)}`);
+    return;
+  }
+
+  if (!found.candidates.length) {
+    await say(
+      chatId,
+      `Read ${found.scanned} messages. None of them looked like a job description ` +
+        `someone sent you directly.`,
+    );
+    return;
+  }
+
+  await say(
+    chatId,
+    `📬 ${found.candidates.length} of ${found.scanned} look like postings. Writing replies…`,
+  );
+
+  for (const candidate of found.candidates) {
+    await tg("sendChatAction", { chat_id: chatId, action: "typing" });
+
+    let job;
+    try {
+      const { result } = await readJobs(
+        { text: buildTaskText(me, [candidate.text]), images: [] },
+        "full",
+      );
+      job = result.jobs[0];
+    } catch (err) {
+      console.error("[inbox]", err instanceof Error ? err.message : err);
+      continue;
+    }
+    if (!job) continue;
+
+    // The sender wrote to you, so the sender is who to answer — not whatever
+    // address the posting text happens to mention.
+    const { addresses } = cleanRecipients([candidate.from]);
+    if (!addresses.length) continue;
+
+    const { written } = await reviseIfNeeded(
+      me,
+      {
+        company: job.company,
+        role: job.role,
+        location: job.location,
+        reqId: job.reqId,
+        recipients: addresses,
+        contactName: job.contactName || candidate.fromName,
+        highlights: job.highlights,
+        seniority: job.seniority,
+        confidence: job.confidence,
+        notes: job.notes,
+      },
+      { subject: job.subject ?? "", body: job.body ?? "" },
+    );
+
+    const body = composeEmail(normalizePlainText(written.body), me);
+    const subject = replySubject(candidate.subject || normalizePlainText(written.subject));
+    const draft = renderDraft(job.company, job.role, addresses, subject, body, candidate.messageId);
+
+    const invented = unsupportedClaimsIn(body, me);
+    if (invented.length) {
+      await say(
+        chatId,
+        `${draft}${NL}${NL}⛔ Not sending this one — it claims "${invented.join('", "')}" ` +
+          `at a named employer and your resume does not say that.`,
+      );
+      continue;
+    }
+
+    await say(chatId, `${draft}${NL}${NL}↩️ Goes back inside their own thread.`, {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "✉️ Send it now", callback_data: "send" }],
+          ...(schedulingAvailable()
+            ? [[{ text: `⏰ Send ${describeWindow()}`, callback_data: "later" }]]
+            : []),
+        ],
+      },
+    });
+
+    if (batchingAvailable()) {
+      await addToBatch(chatId, {
+        company: job.company,
+        role: job.role,
+        contactName: job.contactName || candidate.fromName,
+        inReplyTo: candidate.messageId ? `<${candidate.messageId}>` : "",
+        to: addresses,
+        subject,
+        body,
+      });
+    }
+  }
+
+  await refreshSummary(chatId);
+}
+
 /** The reply doubles as the store, so its shape has to be parseable. */
-function renderDraft(company: string, role: string, to: string[], subject: string, body: string) {
+function renderDraft(
+  company: string,
+  role: string,
+  to: string[],
+  subject: string,
+  body: string,
+  threadId = "",
+) {
   const header = [company, role].filter(Boolean).join(" — ") || "Job application";
-  return `📬 ${header}\n\nTo: ${to.join(", ")}\nSubject: ${subject}\n\n${body}`;
+  // The Thread line is how a reply to mail we received keeps its thread:
+  // the draft text is the only place state lives between two webhook calls.
+  const thread = threadId ? `Thread: ${threadId}\n` : "";
+  return `📬 ${header}\n\nTo: ${to.join(", ")}\n${thread}Subject: ${subject}\n\n${body}`;
 }
 
 function parseDraft(text: string) {
   const to = text.match(/^To:\s*(.+)$/m)?.[1] ?? "";
+  const threadId = text.match(/^Thread:\s*(.+)$/m)?.[1]?.trim() ?? "";
   const subject = text.match(/^Subject:\s*(.+)$/m)?.[1] ?? "";
   const subjectAt = text.indexOf("\nSubject:");
   if (subjectAt === -1) return null;
@@ -321,6 +407,7 @@ function parseDraft(text: string) {
   const role = (dash[1] ?? "").trim();
 
   return {
+    threadId,
     company: company ?? "",
     role: role ?? "",
     to: to.split(/[,;]\s*/).map((s) => s.trim()).filter(Boolean),
@@ -343,6 +430,8 @@ const HELP = `Two things I can do.
 I also check every weekday morning for applications that have gone quiet for a week, and offer to nudge them once. Ask any time with /followups.
 
 Every draft also has a ⏰ button that holds it until the next working morning, which reads better than mail sent at midnight. /queue shows what is waiting.
+
+/inbox reads the last week of mail for job descriptions people sent you directly, and drafts a reply inside their own thread.
 
 /status shows what the server actually has configured.`;
 
@@ -397,6 +486,11 @@ async function handleMessage(message: TgMessage) {
   const text = (message.text ?? message.caption ?? "").trim();
   if (/^\/(start|help)\b/.test(text)) {
     await say(chatId, HELP);
+    return;
+  }
+
+  if (/^\/inbox\b/i.test(text)) {
+    await handleInbox(chatId);
     return;
   }
 
@@ -699,6 +793,7 @@ async function handleCallback(query: NonNullable<TgUpdate["callback_query"]>) {
         to: parsed.to,
         subject: parsed.subject,
         body: parsed.body,
+        inReplyTo: parsed.threadId ? `<${parsed.threadId}>` : "",
       },
     ]);
     await answer("Queued");
@@ -752,7 +847,7 @@ async function handleCallback(query: NonNullable<TgUpdate["callback_query"]>) {
 
   // The email text may say a resume is attached, so a broken resume must stop
   // the send rather than quietly produce a mail that contradicts itself.
-  const resume = await fetchResume();
+  const resume = await fetchResume(parsed.role, me.fullName);
   if (resume && !resume.ok) {
     await answer(`Not sent — ${resume.reason}.`.slice(0, 190));
     return;
@@ -768,6 +863,8 @@ async function handleCallback(query: NonNullable<TgUpdate["callback_query"]>) {
       replyTo: me.email || undefined,
       subject: parsed.subject,
       text: parsed.body,
+      inReplyTo: parsed.threadId ? `<${parsed.threadId}>` : undefined,
+      references: parsed.threadId ? `<${parsed.threadId}>` : undefined,
       attachment: resume?.ok ? resume.attachment : undefined,
     });
 

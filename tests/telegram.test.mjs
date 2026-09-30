@@ -54,11 +54,9 @@ check("the tricky body is intact", tricky.body, "Dear Team,\n\nPut Subject: the 
 check("garbage in gives null, not a bad send", parseDraft("just some text"), null);
 
 // Resume links: a share URL points at a viewer page, not the file.
-const helpers = src.slice(src.indexOf("export function resolveResumeUrl"), src.indexOf("type ResumeResult"));
-const h = await import(
-  "data:text/javascript," +
-    encodeURIComponent(helpers.replace(/:\s*string/g, "").replace(/\bexport function /g, "export function "))
-);
+// The resume helpers moved to lib/resumeFetch so the scheduled send could
+// use them too; they are imported rather than lifted out of the route.
+const h = await import("./.resume.bundle.mjs");
 
 check(
   "a Drive /view link becomes a direct download",

@@ -21,6 +21,8 @@ export type BatchDraft = {
   company: string;
   role: string;
   contactName?: string;
+  /** Message-ID this is a reply to, when it answers mail we received. */
+  inReplyTo?: string;
   to: string[];
   subject: string;
   /** Already composed, signature included — exactly what will be sent. */
