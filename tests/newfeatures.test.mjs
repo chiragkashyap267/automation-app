@@ -10,9 +10,16 @@ globalThis.window = {
 delete process.env.UPSTASH_REDIS_REST_URL;
 delete process.env.UPSTASH_REDIS_REST_TOKEN;
 
-const { classifyReply, priorApplication, guard, passwordRequired, stripSecrets } = await import(
-  "./.newfeatures.bundle.mjs"
-);
+const {
+  classifyReply,
+  priorApplication,
+  guard,
+  passwordRequired,
+  stripSecrets,
+  mergeServerRows,
+  countFollowedUp,
+  computeInsights,
+} = await import("./.newfeatures.bundle.mjs");
 
 let pass = 0, fail = 0;
 const check = (label, actual, expected) => {
@@ -70,6 +77,51 @@ check("the app password is never mirrored", "gmailAppPassword" in stripped, fals
 check("the resume file is never mirrored", "resumeFileData" in stripped, false);
 check("the resume text is mirrored", stripped.resumeText, "my resume");
 check("the gmail address is mirrored", stripped.gmailUser, "me@gmail.com");
+
+section("bot sends reaching the insights");
+{
+  const local = [{
+    id: "web1", messageId: "<w1>", to: ["a@x.com"], company: "Acme", role: "Dev",
+    seniority: "", subject: "s", recipeKey: "dev", source: "recipe", edited: true,
+    sentAt: 2000, reply: "awaiting", replyAt: 0, replyFrom: "", replySubject: "",
+    replyKind: "", lastCheckedAt: 0,
+  }];
+  const entries = [
+    // The same send, echoed back by the server — must not be counted twice.
+    { id: "web1", messageId: "<w1>", to: ["a@x.com"], company: "Acme", role: "Dev", subject: "s", sentAt: 2000, via: "web" },
+    { id: "bot1", messageId: "<b1>", to: ["b@y.com"], company: "Globex", role: "QA", subject: "t", sentAt: 3000, via: "bot" },
+  ];
+  const state = {
+    bot1: { repliedAt: 4000, kind: "interview" },
+    old9: { followedUpAt: 5000 },
+  };
+
+  const merged = mergeServerRows(local, entries, state);
+  check("a bot send appears", merged.length, 2);
+  check("a web send is not duplicated", merged.filter((r) => r.id === "web1").length, 1);
+  check("newest first", merged[0].id, "bot1");
+  check("the local row keeps its recipe", merged.find((r) => r.id === "web1").recipeKey, "dev");
+  check("the reply state comes across", merged[0].reply, "replied");
+  check("and so does the kind", merged[0].replyKind, "interview");
+  check("a bot interview is counted", computeInsights(merged).interviews, 1);
+
+  // Matching on messageId as well, because the bot and the browser generate
+  // their ids differently.
+  const byMessageId = mergeServerRows(
+    local,
+    [{ id: "different", messageId: "<w1>", to: ["a@x.com"], company: "Acme", role: "Dev", subject: "s", sentAt: 2000, via: "web" }],
+    {},
+  );
+  check("a differing id but same Message-ID is one send", byMessageId.length, 1);
+
+  const bounced = mergeServerRows([], [entries[1]], { bot1: { bounced: true } });
+  check("a bounce carries over", bounced[0].reply, "bounced");
+  const auto = mergeServerRows([], [entries[1]], { bot1: { repliedAt: 1, kind: "auto" } });
+  check("an acknowledgement is not a reply", auto[0].reply, "auto");
+
+  check("nudges are counted", countFollowedUp(state), 1);
+  check("nothing nudged reads zero", countFollowedUp({}), 0);
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

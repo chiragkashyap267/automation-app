@@ -8,6 +8,7 @@ import {
   addToBatch,
   batchingAvailable,
   clearBatch,
+  isLastOfBurst,
   loadBatch,
   setSummaryMessage,
 } from "@/lib/batch";
@@ -435,11 +436,22 @@ async function handleMessage(message: TgMessage) {
 async function refreshSummary(chatId: number) {
   if (!batchingAvailable()) return;
 
+  const first = await loadBatch(chatId);
+  if (!first) return;
+
+  // With only one draft its own button is enough; a summary would be noise.
+  // Checked before waiting, so a single screenshot is answered immediately.
+  if (first.drafts.filter((d) => d.to.length).length < 2) return;
+
+  // An album arrives as one webhook call per photo. Without this every one of
+  // them posts its own summary, each with a different half-finished count.
+  if (!(await isLastOfBurst(chatId))) return;
+
+  // Re-read: more screenshots may have landed while we waited.
   const batch = await loadBatch(chatId);
   if (!batch) return;
 
   const ready = batch.drafts.filter((d) => d.to.length);
-  // With only one draft its own button is enough; a summary would be noise.
   if (ready.length < 2) return;
 
   if (batch.summaryMessageId) {

@@ -285,3 +285,80 @@ export function computeInsights(rows: SentEmail[]) {
     recentReplies: replied.sort((a, b) => b.replyAt - a.replyAt).slice(0, 8),
   };
 }
+
+/**
+ * Folds the server's record of sends into the browser's own.
+ *
+ * The browser knows more about the mail it sent itself — which recipe, what
+ * was edited — so a local row always wins. The server's rows are what make
+ * the Telegram bot's sends countable at all; without this the insights
+ * describe only half of what was sent.
+ */
+export function mergeServerRows(
+  local: SentEmail[],
+  entries: {
+    id: string;
+    messageId: string;
+    to: string[];
+    company: string;
+    role: string;
+    subject: string;
+    sentAt: number;
+    via: "web" | "bot";
+  }[],
+  state: Record<
+    string,
+    { repliedAt?: number; kind?: string; followedUpAt?: number; bounced?: boolean }
+  >,
+): SentEmail[] {
+  const known = new Set<string>();
+  for (const row of local) {
+    known.add(row.id);
+    if (row.messageId) known.add(row.messageId);
+  }
+
+  const extra: SentEmail[] = [];
+  for (const entry of entries) {
+    if (known.has(entry.id) || (entry.messageId && known.has(entry.messageId))) continue;
+    known.add(entry.id);
+
+    const s = state[entry.id] ?? {};
+    const reply: ReplyState = s.bounced
+      ? "bounced"
+      : s.repliedAt
+        ? s.kind === "auto"
+          ? "auto"
+          : "replied"
+        : "awaiting";
+
+    extra.push({
+      id: entry.id,
+      messageId: entry.messageId,
+      to: entry.to,
+      company: entry.company,
+      role: entry.role,
+      seniority: "",
+      subject: entry.subject,
+      recipeKey: "",
+      // Nothing local recorded how it was written; the bot always uses a model.
+      source: "ai",
+      edited: false,
+      sentAt: entry.sentAt,
+      reply,
+      replyAt: s.repliedAt ?? 0,
+      replyFrom: "",
+      replySubject: "",
+      replyKind: s.kind ?? "",
+      lastCheckedAt: 0,
+    });
+  }
+
+  return [...local, ...extra].sort((a, b) => b.sentAt - a.sentAt);
+}
+
+/** How many of these have already been nudged once. */
+export function countFollowedUp(
+  state: Record<string, { followedUpAt?: number }>,
+): number {
+  return Object.values(state).filter((s) => s.followedUpAt).length;
+}

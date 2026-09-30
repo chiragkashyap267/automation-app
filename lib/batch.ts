@@ -1,4 +1,12 @@
-import { kvConfigured, kvDelete, kvGet, kvIncrement, kvSet } from "./kv";
+import {
+  kvAppend,
+  kvConfigured,
+  kvDelete,
+  kvGet,
+  kvIncrement,
+  kvRange,
+  kvSet,
+} from "./kv";
 
 /**
  * A batch is the set of drafts built up from screenshots sent one after
@@ -29,41 +37,99 @@ export type Batch = {
 const TTL = 30 * 60;
 const MAX_DRAFTS = 25;
 
-const batchKey = (chatId: number) => `batch:${chatId}`;
+/**
+ * The drafts live in a list and everything else in a small companion key.
+ *
+ * They are split because the drafts are written concurrently — an album of
+ * ten screenshots is ten simultaneous webhook calls — and only a list append
+ * survives that. The summary message id is written by one caller at a time,
+ * so an ordinary read-modify-write is fine for it.
+ */
+const draftsKey = (chatId: number) => `batch:${chatId}:drafts`;
+const metaKey = (chatId: number) => `batch:${chatId}:meta`;
+const seqKey = (chatId: number) => `batch:${chatId}:seq`;
 const sentTodayKey = (chatId: number) => `sent:${chatId}:${new Date().toISOString().slice(0, 10)}`;
+
+type BatchMeta = { summaryMessageId: number | null; startedAt: number };
 
 export const batchingAvailable = kvConfigured;
 
 export async function loadBatch(chatId: number): Promise<Batch | null> {
-  return kvGet<Batch>(batchKey(chatId));
+  if (!kvConfigured()) return null;
+
+  const [stored, meta] = await Promise.all([
+    kvRange<BatchDraft>(draftsKey(chatId), MAX_DRAFTS),
+    kvGet<BatchMeta>(metaKey(chatId)),
+  ]);
+  if (!stored.length && !meta) return null;
+
+  // Two screenshots of one posting arrive as two drafts. The duplicate check
+  // has to happen here rather than on write: concurrent appends cannot see
+  // each other, which is the whole point of appending.
+  const seen = new Set<string>();
+  const drafts = stored.filter((d) => {
+    const key = `${d.subject}|${d.to.join()}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  return {
+    drafts,
+    summaryMessageId: meta?.summaryMessageId ?? null,
+    startedAt: meta?.startedAt ?? Date.now(),
+  };
 }
 
 export async function addToBatch(chatId: number, draft: BatchDraft): Promise<Batch | null> {
-  const existing = (await loadBatch(chatId)) ?? {
-    drafts: [],
-    summaryMessageId: null,
-    startedAt: Date.now(),
-  };
+  if (!kvConfigured()) return null;
 
-  // Never send the same posting twice because a screenshot was shared twice.
-  const duplicate = existing.drafts.some(
-    (d) => d.subject === draft.subject && d.to.join() === draft.to.join(),
-  );
-  if (!duplicate && existing.drafts.length < MAX_DRAFTS) existing.drafts.push(draft);
+  const length = await kvAppend(draftsKey(chatId), draft, MAX_DRAFTS, TTL);
+  if (length === null) return null;
 
-  const saved = await kvSet(batchKey(chatId), existing, TTL);
-  return saved ? existing : null;
+  // First one in starts the batch; the rest only refresh its lifetime.
+  if (length === 1) {
+    await kvSet(metaKey(chatId), { summaryMessageId: null, startedAt: Date.now() }, TTL);
+  }
+
+  return loadBatch(chatId);
+}
+
+/**
+ * Whether this invocation is the last of a burst, and so the one that should
+ * post the summary.
+ *
+ * Each caller takes a ticket, waits out the gap between album photos, and
+ * then checks whether anything came after it. Ten photos produce ten tickets
+ * and exactly one winner — the one that can see all ten drafts.
+ */
+export async function isLastOfBurst(chatId: number, settleMs = 2500): Promise<boolean> {
+  if (!kvConfigured()) return true;
+
+  const mine = await kvIncrement(seqKey(chatId), 60);
+  if (mine === null) return true;
+
+  await new Promise((r) => setTimeout(r, settleMs));
+
+  const latest = await kvGet<number>(seqKey(chatId));
+  return latest === null || Number(latest) === mine;
 }
 
 export async function setSummaryMessage(chatId: number, messageId: number): Promise<void> {
-  const batch = await loadBatch(chatId);
-  if (!batch) return;
-  batch.summaryMessageId = messageId;
-  await kvSet(batchKey(chatId), batch, TTL);
+  const meta = (await kvGet<BatchMeta>(metaKey(chatId))) ?? {
+    summaryMessageId: null,
+    startedAt: Date.now(),
+  };
+  meta.summaryMessageId = messageId;
+  await kvSet(metaKey(chatId), meta, TTL);
 }
 
 export async function clearBatch(chatId: number): Promise<void> {
-  await kvDelete(batchKey(chatId));
+  await Promise.all([
+    kvDelete(draftsKey(chatId)),
+    kvDelete(metaKey(chatId)),
+    kvDelete(seqKey(chatId)),
+  ]);
 }
 
 /* ───────────────────────── daily sending limits ───────────────────────── */

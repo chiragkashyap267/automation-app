@@ -114,3 +114,42 @@ export async function kvClaim(key: string, ttlSeconds: number): Promise<boolean>
 export async function kvHas(key: string): Promise<boolean> {
   return (await command<number>(["EXISTS", key])) === 1;
 }
+
+/**
+ * Appends to the end of a capped list and refreshes its TTL.
+ *
+ * Telegram delivers an album as one webhook call per photo, which Vercel runs
+ * as that many concurrent functions. Read-modify-write on a JSON blob loses
+ * all but one of them; a list append is atomic, so every one survives.
+ *
+ * The cap keeps the OLDEST entries — a batch that hit its limit should stop
+ * growing rather than start discarding what is already in it.
+ */
+export async function kvAppend(
+  key: string,
+  value: unknown,
+  keepFirst: number,
+  ttlSeconds: number,
+): Promise<number | null> {
+  const length = await command<number>(["RPUSH", key, JSON.stringify(value)]);
+  if (length === null) return null;
+  if (length > keepFirst) await command(["LTRIM", key, 0, keepFirst - 1]);
+  await command(["EXPIRE", key, ttlSeconds]);
+  return Math.min(length, keepFirst);
+}
+
+/** Oldest first, matching the order kvAppend writes in. */
+export async function kvRange<T>(key: string, limit: number): Promise<T[]> {
+  const raw = await command<string[]>(["LRANGE", key, 0, limit - 1]);
+  if (!raw) return [];
+
+  const out: T[] = [];
+  for (const entry of raw) {
+    try {
+      out.push(JSON.parse(entry) as T);
+    } catch {
+      /* skip an entry we cannot read rather than losing the whole list */
+    }
+  }
+  return out;
+}

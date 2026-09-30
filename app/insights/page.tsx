@@ -6,7 +6,9 @@ import {
   applyReplyResults,
   clearHistory,
   computeInsights,
+  countFollowedUp,
   loadHistory,
+  mergeServerRows,
   type Insights,
   type SentEmail,
 } from "@/lib/history";
@@ -15,6 +17,22 @@ import { KIND_LABEL, type ReplyKind } from "@/lib/replyKind";
 import { authHeaders } from "@/lib/appPassword";
 import { canSend, missingSendLabel, useProfile } from "@/lib/store";
 
+type ServerEntry = {
+  id: string;
+  messageId: string;
+  to: string[];
+  company: string;
+  role: string;
+  subject: string;
+  sentAt: number;
+  via: "web" | "bot";
+};
+
+type ServerState = Record<
+  string,
+  { repliedAt?: number; kind?: string; followedUpAt?: number; bounced?: boolean }
+>;
+
 export default function InsightsPage() {
   const { profile, ready } = useProfile();
   const [rows, setRows] = useState<SentEmail[]>([]);
@@ -22,18 +40,57 @@ export default function InsightsPage() {
   const [checking, setChecking] = useState(false);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
+  const [server, setServer] = useState<{ entries: ServerEntry[]; state: ServerState }>({
+    entries: [],
+    state: {},
+  });
+  const [botSends, setBotSends] = useState(0);
+
+  /**
+   * The browser only knows about its own sends. Anything sent from Telegram
+   * lives on the server, and without this the insights silently describe half
+   * the picture.
+   */
+  const pullServer = useCallback(async (local: SentEmail[]) => {
+    try {
+      const res = await fetch("/api/outbox", { headers: authHeaders() });
+      if (!res.ok) return local;
+
+      const payload = (await res.json()) as {
+        entries?: ServerEntry[];
+        state?: ServerState;
+        available?: boolean;
+      };
+      if (!payload.available) return local;
+
+      const entries = payload.entries ?? [];
+      const state = payload.state ?? {};
+      setServer({ entries, state });
+
+      const merged = mergeServerRows(local, entries, state);
+      setBotSends(merged.length - local.length);
+      return merged;
+    } catch {
+      // The insights still work from the local history alone.
+      return local;
+    }
+  }, []);
 
   useEffect(() => {
-    setRows(loadHistory());
+    const local = loadHistory();
+    setRows(local);
     setHydrated(true);
-  }, []);
+    void pullServer(local).then(setRows);
+  }, [pullServer]);
 
   const checkReplies = useCallback(async () => {
     setChecking(true);
     setError("");
     setStatus("");
     try {
-      const pending = loadHistory().filter((r) => r.reply !== "replied" && r.reply !== "bounced");
+      const pending = mergeServerRows(loadHistory(), server.entries, server.state).filter(
+        (r) => r.reply !== "replied" && r.reply !== "bounced",
+      );
       if (!pending.length) {
         setStatus("Nothing is waiting on a reply.");
         return;
@@ -67,8 +124,10 @@ export default function InsightsPage() {
       };
       if (!response.ok) throw new Error(payload.error || "Could not check replies.");
 
+      // applyReplyResults only knows the local rows; the route has already
+      // written the rest back to the server, so re-read them.
       const updated = applyReplyResults(payload.results ?? []);
-      setRows([...updated]);
+      setRows(await pullServer([...updated]));
 
       const found = (payload.results ?? []).filter((r) => r.reply === "replied").length;
       const interviews = (payload.results ?? []).filter((r) => r.kind === "interview").length;
@@ -83,7 +142,7 @@ export default function InsightsPage() {
     } finally {
       setChecking(false);
     }
-  }, [profile]);
+  }, [profile, pullServer, server]);
 
   if (!ready || !hydrated) {
     return <main className="mx-auto max-w-[640px] px-4 py-10 text-sm opacity-60">Loading…</main>;
@@ -116,7 +175,11 @@ export default function InsightsPage() {
               tone={data.interviews > 0 ? "ok" : undefined}
               hint={data.rejections > 0 ? `${data.rejections} rejected` : undefined}
             />
-            <Stat label="Sent" value={String(data.sent)} />
+            <Stat
+              label="Sent"
+              value={String(data.sent)}
+              hint={botSends > 0 ? `${botSends} from Telegram` : undefined}
+            />
             <Stat
               label="Reply rate"
               value={data.replyRate === null ? "—" : `${data.replyRate}%`}
@@ -132,6 +195,11 @@ export default function InsightsPage() {
               label="Bounced"
               value={String(data.bounced)}
               tone={data.bounced > 0 ? "bad" : undefined}
+            />
+            <Stat
+              label="Nudged"
+              value={String(countFollowedUp(server.state))}
+              hint="followed up once"
             />
           </div>
 
