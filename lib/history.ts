@@ -4,6 +4,7 @@ import {
   findPriorApplication,
   type PriorApplication,
 } from "./priorApplication";
+import { bounceHealth, type BounceHealth } from "./sendHealth";
 import type { Draft } from "./types";
 
 /**
@@ -168,11 +169,8 @@ export function checkSendGuard(extra = 0): SendGuard {
 }
 
 /** Bounces hurt sender reputation, so a run of them is worth stopping for. */
-export function recentBounceRate(): { bounced: number; sent: number; high: boolean } {
-  const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  const recent = loadHistory().filter((r) => r.sentAt > weekAgo);
-  const bounced = recent.filter((r) => r.reply === "bounced").length;
-  return { bounced, sent: recent.length, high: recent.length >= 10 && bounced / recent.length > 0.2 };
+export function recentBounceRate(): BounceHealth {
+  return bounceHealth(loadHistory().map((r) => ({ sentAt: r.sentAt, bounced: r.reply === "bounced" })));
 }
 
 /** The browser's own view of it, over the localStorage history. */

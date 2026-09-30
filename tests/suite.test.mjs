@@ -50,6 +50,7 @@ const {
   statedYearsIn,
   findPriorApplication,
   describePriorApplication,
+  bounceHealth,
 } = await import("./.bundle.mjs");
 
 let pass = 0;
@@ -801,6 +802,26 @@ section("the bot's own validation");
   check("a repeat application warns", withPrior.some((i) => i.id === "already-applied"), true);
   check("and it is only a warning", withPrior.find((i) => i.id === "already-applied")?.severity, "warning");
   check("no prior means no warning", validateDraft(draft, profile, null).some((i) => i.id === "already-applied"), false);
+}
+
+section("stopping a bad run");
+{
+  const DAY = 86400000;
+  const now = Date.UTC(2026, 9, 10);
+  const rows = (total, bounced, ageDays = 1) =>
+    Array.from({ length: total }, (_, i) => ({ sentAt: now - ageDays * DAY, bounced: i < bounced }));
+
+  // Bounces are the signal providers weigh most heavily, and a run of them
+  // is what a folder of misread screenshot addresses produces.
+  check("a quarter bouncing stops it", bounceHealth(rows(20, 5), now).high, true);
+  check("and it says how bad", bounceHealth(rows(20, 5), now).rate, 25);
+  check("a normal rate is fine", bounceHealth(rows(20, 1), now).high, false);
+  // Two bounces out of three is alarming, but it is not evidence yet.
+  check("too few to judge is not a stop", bounceHealth(rows(3, 2), now).high, false);
+  check("nothing sent is fine", bounceHealth([], now).high, false);
+  // Last month's bad run should not block today.
+  check("old bounces have aged out", bounceHealth(rows(20, 10, 30), now).high, false);
+  check("a clean run says nothing", bounceHealth(rows(20, 0), now).message, "");
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

@@ -8,7 +8,7 @@ import { learnFromSend } from "@/lib/pipeline";
 import { editRatio } from "@/lib/recipes";
 import { authHeaders } from "@/lib/appPassword";
 import { canSend, loadDrafts, missingSendLabel, saveDrafts, useProfile } from "@/lib/store";
-import { priorApplication } from "@/lib/history";
+import { priorApplication, recentBounceRate } from "@/lib/history";
 import { applyFixes, countBySeverity, validateDraft, type Issue } from "@/lib/validate";
 import type { Draft } from "@/lib/types";
 
@@ -133,6 +133,7 @@ Send anyway?`)) return;
   }
 
   const sendReady = canSend(profile);
+  const health = recentBounceRate();
 
   return (
     <main className="mx-auto max-w-[640px] px-4 pb-36 pt-5">
@@ -153,6 +154,15 @@ Send anyway?`)) return;
         <Row label="Queued" value={`${queue.length} email${queue.length === 1 ? "" : "s"}`} />
         {profile.ccSelf && <Row label="CC" value={profile.gmailUser} />}
       </section>
+
+      {health.high && (
+        <div
+          className="mb-4 rounded-xl px-3.5 py-2.5 text-[13px] leading-relaxed"
+          style={{ background: "var(--danger-soft)", color: "var(--danger)" }}
+        >
+          {health.message}
+        </div>
+      )}
 
       {!sendReady && (
         <div
@@ -237,7 +247,7 @@ Send anyway?`)) return;
             <button
               type="button"
               className="btn btn-primary w-full"
-              disabled={sending || !sendReady || !sendableNow.length}
+              disabled={sending || !sendReady || !sendableNow.length || health.high}
               onClick={() => void sendAll()}
             >
               {sending ? `Sending ${cursor}/${sendableNow.length}…` : `Send all ${sendableNow.length} now`}

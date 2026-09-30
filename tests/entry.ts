@@ -21,3 +21,4 @@ export { profileFingerprint } from "../lib/recipes";
 export { recipeProblems } from "../lib/validate";
 export { checkExperience, statedYearsIn } from "../lib/experience";
 export { findPriorApplication, describePriorApplication } from "../lib/priorApplication";
+export { bounceHealth } from "../lib/sendHealth";

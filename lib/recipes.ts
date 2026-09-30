@@ -8,6 +8,7 @@ import {
   editRatio,
   familyKey,
   findRecipe,
+  hashInput,
   isSettled,
   profileFingerprint,
   RECIPE_DEFAULTS,
@@ -19,6 +20,7 @@ import {
 // The rules live in recipeCore so the bot can use them too; this module adds
 // the browser's storage on top and re-exports them unchanged.
 export {
+  hashInput,
   deriveRecipe,
   editRatio,
   familyKey,
@@ -211,16 +213,6 @@ export function noteRecipeUse(key: string) {
 /* ───────────────────────── input cache ───────────────────────── */
 
 /** FNV-1a — fast, dependency-free, and good enough to key a local cache. */
-export function hashInput(images: { data: string }[], texts: string[]): string {
-  const payload = [...images.map((i) => i.data), ...texts].join("\u0000");
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < payload.length; i++) {
-    hash ^= payload.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return `${(hash >>> 0).toString(16)}-${payload.length.toString(36)}`;
-}
-
 export function readExtractCache(hash: string): Facts[] | null {
   const entries = readJson<CachedExtract[]>(CACHE_KEY, []);
   const hit = entries.find((e) => e.hash === hash);

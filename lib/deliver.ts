@@ -1,6 +1,7 @@
 import { countSends, DAILY_HARD_LIMIT, sendsToday, type BatchDraft } from "./batch";
 import { explainSmtpError, preflight, sendMail, type MailRequest } from "./mailer";
-import { recordOutbound } from "./outbox";
+import { loadOutbox, loadState, outboxAvailable, recordOutbound } from "./outbox";
+import { bounceHealth } from "./sendHealth";
 import type { Profile } from "./types";
 
 /**
@@ -50,6 +51,15 @@ export async function deliverDrafts(
       results: [],
       refused: "GMAIL_USER and GMAIL_APP_PASSWORD are not set on the server.",
     };
+  }
+
+  // A run of bounces is the account at risk, not the applications.
+  if (outboxAvailable()) {
+    const [entries, state] = await Promise.all([loadOutbox(), loadState()]);
+    const health = bounceHealth(
+      entries.map((e) => ({ sentAt: e.sentAt, bounced: state[e.id]?.bounced })),
+    );
+    if (health.high) return { sent: 0, attempted: 0, results: [], refused: health.message };
   }
 
   const already = await sendsToday(chatId);

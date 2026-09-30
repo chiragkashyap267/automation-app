@@ -22,7 +22,14 @@ import { replySubject } from "@/lib/followup";
 import { fetchResume, resumeFilename } from "@/lib/resumeFetch";
 import { resumeVariants } from "@/lib/resume";
 import { applyFixes, recipeProblems, validateDraft, type Issue } from "@/lib/validate";
-import { findRecipe, profileFingerprint, renderRecipe, type Recipe } from "@/lib/recipeCore";
+import {
+  findRecipe,
+  hashInput,
+  profileFingerprint,
+  renderRecipe,
+  type Recipe,
+} from "@/lib/recipeCore";
+import { readSharedExtract, writeSharedExtract } from "@/lib/sharedCache";
 import { loadSharedRecipes } from "@/lib/sharedRecipes";
 import { findPriorApplication, type PastSend } from "@/lib/priorApplication";
 import { describeCandidates } from "@/lib/followup";
@@ -590,17 +597,43 @@ async function handleAsk(chatId: number, ask: { email: string; role: string }) {
     return;
   }
 
-  const body = composeEmail(normalizePlainText(written.body), me);
-  const draft = renderDraft(
-    company || "Cold enquiry",
-    role,
-    [ask.email],
-    normalizePlainText(written.subject),
-    body,
+  const subject = normalizePlainText(written.subject);
+  // A cold enquiry is still an email going to a stranger, so it gets the
+  // same checks a posting-driven draft gets.
+  const checked = vet(
+    {
+      subject,
+      body: composeEmail(normalizePlainText(written.body), me),
+      recipients: [ask.email],
+      company,
+      contactName: "",
+    },
+    me,
+    await pastSends(),
   );
 
-  await say(chatId, draft, {
-    reply_markup: { inline_keyboard: [[{ text: "✉️ Send it", callback_data: "send" }]] },
+  const draft = renderDraft(company || "Cold enquiry", role, [ask.email], subject, checked.body);
+
+  if (checked.errors.length) {
+    await say(
+      chatId,
+      `${draft}${NL}${NL}⛔ Not sending this one:${NL}` +
+        checked.errors.map((e) => `• ${e.message}`).join(NL),
+    );
+    return;
+  }
+
+  const notes = checked.warnings.map((w) => `⚠️ ${w.message}`).join(NL);
+
+  await say(chatId, notes ? `${draft}${NL}${NL}${notes}` : draft, {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: "✉️ Send it now", callback_data: "send" }],
+        ...(schedulingAvailable()
+          ? [[{ text: `⏰ Send ${describeWindow()}`, callback_data: "later" }]]
+          : []),
+      ],
+    },
   });
 }
 
@@ -687,17 +720,33 @@ async function handleMessage(message: TgMessage) {
   const recipes = await loadSharedRecipes();
   const fingerprint = profileFingerprint(me);
 
-  let jobs;
-  try {
-    const { result } = await readJobs(
-      { text: buildTaskText(me, texts), images },
-      readModeFor(recipes),
-    );
-    jobs = result.jobs;
-  } catch (err) {
-    await say(chatId, `⚠️ ${err instanceof Error ? err.message : "Could not read that."}`);
-    return;
+  // The same screenshot shared twice should not be read twice.
+  const inputHash = hashInput(images, texts);
+  // A cached entry holds only the facts; a fresh read may also carry the
+  // email the model wrote in the same call.
+  type ReadJob = Facts & { subject?: string; body?: string };
+  let jobs: ReadJob[] | null = await readSharedExtract(inputHash);
+  const cached = Boolean(jobs?.length);
+
+  if (!cached) {
+    try {
+      const { result } = await readJobs(
+        { text: buildTaskText(me, texts), images },
+        readModeFor(recipes),
+      );
+      jobs = result.jobs;
+      await writeSharedExtract(
+        inputHash,
+        // Never cache the written email: the wording depends on the profile
+        // and would outlive an edit to it.
+        jobs.map(({ subject: _s, body: _b, ...facts }) => facts as Facts),
+      );
+    } catch (err) {
+      await say(chatId, `⚠️ ${err instanceof Error ? err.message : "Could not read that."}`);
+      return;
+    }
   }
+  if (!jobs) jobs = [];
 
   if (!jobs.length) {
     await say(chatId, "Nothing in that looked like a job posting.");

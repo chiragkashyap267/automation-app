@@ -301,3 +301,13 @@ export function findRecipe(
 }
 
 /** Newly written email becomes (or refreshes) the recipe for its family. */
+
+export function hashInput(images: { data: string }[], texts: string[]): string {
+  const payload = [...images.map((i) => i.data), ...texts].join("\u0000");
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < payload.length; i++) {
+    hash ^= payload.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `${(hash >>> 0).toString(16)}-${payload.length.toString(36)}`;
+}
