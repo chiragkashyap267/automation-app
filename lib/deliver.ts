@@ -81,7 +81,9 @@ export async function deliverDrafts(
     const draft = queue[i];
     const label = `${draft.company || "Unknown"} — ${draft.role || "role"}`;
 
-    const file = attachment ? await attachment(draft) : undefined;
+    // A resume belongs with an application. Attaching it to a service
+    // pitch makes the sender look like they want a job instead.
+    const file = attachment && draft.kind !== "pitch" ? await attachment(draft) : undefined;
     const problem = preflight({ to: draft.to, subject: draft.subject, text: draft.body });
     if (problem) {
       results.push(`✕ ${label} — ${problem}`);
@@ -114,6 +116,7 @@ export async function deliverDrafts(
         company: draft.company,
         role: draft.role,
         contactName: draft.contactName ?? "",
+        kind: draft.kind ?? "application",
         subject: draft.subject,
         sentAt: Date.now(),
         via: "bot",

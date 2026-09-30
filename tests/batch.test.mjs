@@ -157,5 +157,29 @@ check("an empty batch says so", /Nothing left/.test(edits.join(" ")), true);
   await clearBatch(ALBUM);
 }
 
+// A resume belongs with a job application. Attaching it to a freelance
+// pitch turns an offer of work into what looks like a job request.
+{
+  const PITCH = 333;
+  const sent = [];
+  const file = { filename: "cv.pdf", content: Buffer.from("%PDF-"), contentType: "application/pdf" };
+
+  await addToBatch(PITCH, { ...draft("Freshbite", "hi@freshbite.in"), kind: "pitch" });
+  await addToBatch(PITCH, draft("Acme", "jobs@acme.com"));
+
+  await sendAllInBatch(PITCH, 1, {
+    profile: PROFILE,
+    attachment: async () => file,
+    edit: async () => {},
+    answer: async () => {},
+    send: async (r) => { sent.push(r); return "<id>"; },
+  });
+
+  const pitchMail = sent.find((r) => r.to[0] === "hi@freshbite.in");
+  const jobMail = sent.find((r) => r.to[0] === "jobs@acme.com");
+  check("a pitch carries no resume", pitchMail.attachment, undefined);
+  check("an application still does", jobMail.attachment.filename, "cv.pdf");
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

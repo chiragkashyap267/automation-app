@@ -30,6 +30,12 @@ export type Outbound = {
   contactName: string;
   subject: string;
   sentAt: number;
+  /**
+   * An application asks for a job; a pitch sells a service. They need
+   * different follow-ups and different attachments, so the difference has
+   * to survive the round trip.
+   */
+  kind?: "application" | "pitch";
   /** Where it was sent from, and which chat to report back to. */
   via: "web" | "bot";
   chatId: number | null;

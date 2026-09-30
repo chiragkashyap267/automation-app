@@ -205,5 +205,29 @@ check("password only", missingSendField({ gmailUser: "", gmailAppPassword: "abcd
 check("it says the password is already there", missingSendLabel({ gmailUser: "", gmailAppPassword: "abcd" }), "your Gmail address (the App Password is saved)");
 check("complete", missingSendField({ gmailUser: "me@gmail.com", gmailAppPassword: "abcd" }), null);
 
+section("a pitch is not an application");
+{
+  const pitch = entry({
+    kind: "pitch",
+    company: "Freshbite",
+    role: "packaging for a snack range",
+    contactName: "",
+  });
+  const note = buildFollowUp(pitch, profile, 9);
+
+  // Nudging a service pitch with "I applied for..." is wrong and obviously
+  // automated. The recipient never asked for a job application.
+  check("it does not say applied", /applied/i.test(note.body), false);
+  check("it says it wrote to them", note.body.includes("I wrote to you"), true);
+  check("it offers a quote, not keenness", note.body.includes("rough quote"), true);
+  check("no talk of a position being filled", /position is filled/i.test(note.body), false);
+  check("the work is named", note.body.includes("packaging for a snack range"), true);
+
+  // And an application still reads as one.
+  const application = buildFollowUp(entry(), profile, 9);
+  check("an application still says applied", application.body.includes("I applied for"), true);
+  check("and mentions the role", application.body.includes("QA Engineer role"), true);
+}
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

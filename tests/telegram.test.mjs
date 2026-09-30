@@ -8,7 +8,13 @@ const body = src.slice(src.indexOf("function renderDraft"), src.indexOf("const H
 const mod = await import(
   "data:text/javascript," +
     encodeURIComponent(
-      body.replace(/:\s*string\[\]/g, "").replace(/:\s*string/g, "").replace(/\bfunction /g, "export function ")
+      body
+        // Crude TypeScript stripping: enough for the two pure functions
+        // lifted out of the route, including union literal types.
+        .replace(/:\s*"[^"]*"(?:\s*\|\s*"[^"]*")+/g, "")
+        .replace(/:\s*string\[\]/g, "")
+        .replace(/:\s*string/g, "")
+        .replace(/\bfunction /g, "export function ")
     )
 );
 const { renderDraft, parseDraft } = mod;
@@ -118,6 +124,26 @@ check(
   null,
 );
 check("plain text is not an enquiry", a.parseAsk("hello there"), null);
+
+// A pitch has to survive the round trip through the message text, because
+// that text is the only state between showing a draft and tapping Send.
+{
+  const pitch = renderDraft("Freshbite", "packaging", ["hi@freshbite.in"], "Packaging for Freshbite", "Hello,\n\nBody here.", "", "pitch");
+  const back = parseDraft(pitch);
+  check("a pitch is marked as one", back.kind, "pitch");
+  check("its body is unchanged", back.body, "Hello,\n\nBody here.");
+  check("its recipient survives", back.to, ["hi@freshbite.in"]);
+  // The marker must not leak into what the recipient reads.
+  check("the marker is not in the body", back.body.includes("Kind:"), false);
+
+  const application = parseDraft(renderDraft("Acme", "Dev", ["a@b.com"], "Application", "Dear Team,\n\nBody."));
+  check("an application defaults to application", application.kind, "application");
+  check(
+    "an old draft with no marker still parses",
+    parseDraft("📬 Acme — Dev\n\nTo: a@b.com\nSubject: X\n\nBody").kind,
+    "application",
+  );
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

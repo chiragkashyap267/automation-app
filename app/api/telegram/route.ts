@@ -570,7 +570,15 @@ async function handlePitch(chatId: number, text: string) {
 
   const body = `${normalizePlainText(written.body)}${NL}${NL}${services.signOff || "Best regards"},${NL}${signature}`;
   const subject = normalizePlainText(written.subject);
-  const draft = renderDraft(lead.company || "Pitch", lead.need.slice(0, 40), [lead.email], subject, body);
+  const draft = renderDraft(
+    lead.company || "Pitch",
+    lead.need.slice(0, 40),
+    [lead.email],
+    subject,
+    body,
+    "",
+    "pitch",
+  );
 
   if (problems.length) {
     await say(
@@ -601,17 +609,24 @@ function renderDraft(
   subject: string,
   body: string,
   threadId = "",
+  kind: "application" | "pitch" = "application",
 ) {
   const header = [company, role].filter(Boolean).join(" — ") || "Job application";
   // The Thread line is how a reply to mail we received keeps its thread:
   // the draft text is the only place state lives between two webhook calls.
   const thread = threadId ? `Thread: ${threadId}\n` : "";
-  return `📬 ${header}\n\nTo: ${to.join(", ")}\n${thread}Subject: ${subject}\n\n${body}`;
+  // A pitch must not pick up a resume or an application-shaped nudge,
+  // and the draft text is the only state that survives to the Send tap.
+  const stamp = kind === "pitch" ? `Kind: pitch\n` : "";
+  return `📬 ${header}\n\nTo: ${to.join(", ")}\n${thread}${stamp}Subject: ${subject}\n\n${body}`;
 }
 
 function parseDraft(text: string) {
   const to = text.match(/^To:\s*(.+)$/m)?.[1] ?? "";
   const threadId = text.match(/^Thread:\s*(.+)$/m)?.[1]?.trim() ?? "";
+  const kind: "application" | "pitch" = /^Kind:\s*pitch$/m.test(text)
+    ? "pitch"
+    : "application";
   const subject = text.match(/^Subject:\s*(.+)$/m)?.[1] ?? "";
   const subjectAt = text.indexOf("\nSubject:");
   if (subjectAt === -1) return null;
@@ -629,6 +644,7 @@ function parseDraft(text: string) {
 
   return {
     threadId,
+    kind,
     company: company ?? "",
     role: role ?? "",
     to: to.split(/[,;]\s*/).map((s) => s.trim()).filter(Boolean),
@@ -1088,6 +1104,7 @@ async function handleCallback(query: NonNullable<TgUpdate["callback_query"]>) {
         subject: parsed.subject,
         body: parsed.body,
         inReplyTo: parsed.threadId ? `<${parsed.threadId}>` : "",
+        kind: parsed.kind,
       },
     ]);
     await answer("Queued");
@@ -1141,7 +1158,9 @@ async function handleCallback(query: NonNullable<TgUpdate["callback_query"]>) {
 
   // The email text may say a resume is attached, so a broken resume must stop
   // the send rather than quietly produce a mail that contradicts itself.
-  const resume = await fetchResume(parsed.role, me.fullName);
+  // A service pitch carries no CV. Sending one turns an offer of work
+  // into what looks like a job application.
+  const resume = parsed.kind === "pitch" ? null : await fetchResume(parsed.role, me.fullName);
   if (resume && !resume.ok) {
     await answer(`Not sent — ${resume.reason}.`.slice(0, 190));
     return;
@@ -1169,6 +1188,7 @@ async function handleCallback(query: NonNullable<TgUpdate["callback_query"]>) {
       company: parsed.company,
       role: parsed.role,
       contactName: "",
+      kind: parsed.kind,
       subject: parsed.subject,
       sentAt: Date.now(),
       via: "bot",

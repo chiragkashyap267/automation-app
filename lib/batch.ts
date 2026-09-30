@@ -23,6 +23,8 @@ export type BatchDraft = {
   contactName?: string;
   /** Message-ID this is a reply to, when it answers mail we received. */
   inReplyTo?: string;
+  /** A pitch carries no resume and gets a different follow-up. */
+  kind?: "application" | "pitch";
   to: string[];
   subject: string;
   /** Already composed, signature included — exactly what will be sent. */

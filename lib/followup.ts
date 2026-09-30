@@ -115,23 +115,43 @@ export function buildFollowUp(
 ): { subject: string; body: string } {
   const role = entry.role?.trim();
   const company = entry.company?.trim();
-  const about = role
-    ? `the ${role} role${company ? ` at ${company}` : ""}`
-    : company
-      ? `the opening at ${company}`
-      : "the role I wrote to you about";
+  const about =
+    entry.kind === "pitch"
+      ? role
+        ? `the ${role}${company ? ` for ${company}` : ""}`
+        : company
+          ? `the work for ${company}`
+          : "the work I wrote to you about"
+      : role
+        ? `the ${role} role${company ? ` at ${company}` : ""}`
+        : company
+          ? `the opening at ${company}`
+          : "the role I wrote to you about";
 
   const when = daysAgo >= 14 ? "a couple of weeks ago" : `${daysAgo} days ago`;
 
-  const lines = [
-    greeting(entry),
-    "",
-    `I applied for ${about} ${when} and wanted to check my email had reached the right person.`,
-    "",
-    "I am still keen, and happy to send anything else that would help. If the position is filled, do let me know and I will stop watching for it.",
-    "",
-    buildSignature(profile),
-  ];
+  // A pitch was an offer of work, not a request for a job. Nudging it with
+  // "I applied for..." is both wrong and obviously automated.
+  const lines =
+    entry.kind === "pitch"
+      ? [
+          greeting(entry),
+          "",
+          `I wrote to you ${when} about ${about.replace(/^the /, "")} and wanted to check it reached the right person.`,
+          "",
+          "Happy to send examples or a rough quote if it would help. If you have it covered, just say so and I will leave it there.",
+          "",
+          buildSignature(profile),
+        ]
+      : [
+          greeting(entry),
+          "",
+          `I applied for ${about} ${when} and wanted to check my email had reached the right person.`,
+          "",
+          "I am still keen, and happy to send anything else that would help. If the position is filled, do let me know and I will stop watching for it.",
+          "",
+          buildSignature(profile),
+        ];
 
   return { subject: replySubject(entry.subject), body: lines.join("\n") };
 }
