@@ -6,7 +6,7 @@ import {
   selectFollowUps,
   STALE_DAYS,
 } from "./followup";
-import { scanInbox, type SentItem } from "./inboxScan";
+import { scanInbox, type ScanResult, type SentItem } from "./inboxScan";
 import { preflight, sendMail, type MailRequest } from "./mailer";
 import {
   claimFollowUp,
@@ -35,41 +35,43 @@ const GAP_MS = 1200;
 
 export type Candidate = { entry: Outbound; daysAgo: number };
 
+/** How far back an unanswered application is still worth asking Gmail about. */
+const REVIEW_DAYS = 45;
+
+export type InboxReview = {
+  outbox: Outbound[];
+  state: StateMap;
+  /** What this scan newly discovered, for the digest. */
+  fresh: ScanResult[];
+  /** null when the inbox could not be read at all. */
+  scanned: number | null;
+};
+
 /**
- * Everything eligible right now, after re-checking the inbox.
+ * One pass over the inbox, shared by everything that runs in the morning.
  *
- * `scanned` is null when the inbox could not be read — in which case nothing
- * is offered, because a nudge to someone who already answered is worse than
- * no nudge at all.
+ * The follow-up offer and the digest both need to know what has been
+ * answered, and opening two IMAP connections to ask the same question would
+ * be wasteful as well as slower.
  */
-export async function findQuiet(
-  profile: Profile,
-  now = Date.now(),
-): Promise<{ candidates: Candidate[]; scanned: number | null; total: number }> {
-  if (!outboxAvailable()) return { candidates: [], scanned: null, total: 0 };
+export async function reviewInbox(profile: Profile, now = Date.now()): Promise<InboxReview> {
+  const empty: InboxReview = { outbox: [], state: {}, fresh: [], scanned: null };
+  if (!outboxAvailable()) return empty;
 
   const outbox = await loadOutbox();
-  let state = await loadState();
+  const state = await loadState();
+  if (!outbox.length) return { outbox, state, fresh: [], scanned: 0 };
 
-  // Only entries inside the window can ever be nudged, so only those are
-  // worth asking Gmail about.
-  const window = outbox.filter((e) => {
-    const age = now - e.sentAt;
-    return age >= QUIET_DAYS * DAY && age <= STALE_DAYS * DAY;
-  });
-
-  const unresolved = window.filter((e) => {
+  const unresolved = outbox.filter((e) => {
     const s = state[e.id];
-    return !s?.repliedAt && !s?.bounced && !s?.followedUpAt;
+    return !s?.repliedAt && !s?.bounced && now - e.sentAt <= REVIEW_DAYS * DAY;
   });
-
-  if (!unresolved.length) return { candidates: [], scanned: 0, total: outbox.length };
+  if (!unresolved.length) return { outbox, state, fresh: [], scanned: 0 };
 
   const user = profile.gmailUser?.trim() ?? "";
   const pass = profile.gmailAppPassword?.replace(/\s+/g, "") ?? "";
-  if (!user || !pass) return { candidates: [], scanned: null, total: outbox.length };
+  if (!user || !pass) return { ...empty, outbox, state };
 
-  let scanned: number | null = null;
   try {
     const items: SentItem[] = unresolved.map((e) => ({
       id: e.id,
@@ -78,29 +80,52 @@ export async function findQuiet(
       sentAt: e.sentAt,
     }));
     const found = await scanInbox({ user, pass }, items);
-    scanned = found.scanned;
 
     const patch: StateMap = {};
     for (const row of found.results) {
       patch[row.id] =
         row.reply === "bounced" ? { bounced: true } : { repliedAt: row.at, kind: row.kind };
     }
+
+    const merged: StateMap = { ...state };
     if (Object.keys(patch).length) {
       await mergeState(patch);
-      state = { ...state };
-      for (const [id, change] of Object.entries(patch)) state[id] = { ...state[id], ...change };
+      for (const [id, change] of Object.entries(patch)) merged[id] = { ...merged[id], ...change };
     }
+
+    return { outbox, state: merged, fresh: found.results, scanned: found.scanned };
   } catch (err) {
-    // Could not read the inbox — offer nothing rather than risk nudging
-    // someone who has already replied.
     console.error("[followup] inbox scan", err instanceof Error ? err.message : err);
-    return { candidates: [], scanned: null, total: outbox.length };
+    return { ...empty, outbox, state };
+  }
+}
+
+/**
+ * Everything eligible for a nudge right now, after re-checking the inbox.
+ *
+ * `scanned` is null when the inbox could not be read — in which case nothing
+ * is offered, because a nudge to someone who already answered is worse than
+ * no nudge at all.
+ */
+export async function findQuiet(
+  profile: Profile,
+  now = Date.now(),
+  review?: InboxReview,
+): Promise<{ candidates: Candidate[]; scanned: number | null; total: number }> {
+  const seen = review ?? (await reviewInbox(profile, now));
+  if (seen.scanned === null) {
+    return { candidates: [], scanned: null, total: seen.outbox.length };
   }
 
+  const window = seen.outbox.filter((e) => {
+    const age = now - e.sentAt;
+    return age >= QUIET_DAYS * DAY && age <= STALE_DAYS * DAY;
+  });
+
   return {
-    candidates: selectFollowUps(window, state, now, MAX_PER_RUN),
-    scanned,
-    total: outbox.length,
+    candidates: selectFollowUps(window, seen.state, now, MAX_PER_RUN),
+    scanned: seen.scanned,
+    total: seen.outbox.length,
   };
 }
 

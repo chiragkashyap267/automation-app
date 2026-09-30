@@ -17,3 +17,5 @@ tests/.batch.bundle.mjs
 tests/.usage.bundle.mjs
 tests/.newfeatures.bundle.mjs
 tests/.followups.bundle.mjs
+tests/.ocr.bundle.mjs
+tests/.schedule.bundle.mjs

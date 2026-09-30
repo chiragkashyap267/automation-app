@@ -19,6 +19,13 @@ import { unsupportedClaimsIn } from "@/lib/validate";
 import { describeCandidates } from "@/lib/followup";
 import { findQuiet, sendFollowUps } from "@/lib/followupRun";
 import { loadOutbox, loadState, recordOutbound } from "@/lib/outbox";
+import {
+  clearQueue,
+  describeWindow,
+  loadQueue,
+  queueDrafts,
+  schedulingAvailable,
+} from "@/lib/schedule";
 import { composeEmail, normalizePlainText } from "@/lib/signature";
 import { EMPTY_PROFILE, type Profile } from "@/lib/types";
 
@@ -263,6 +270,33 @@ async function handleStatus(chatId: number) {
   await say(chatId, lines.join(NL));
 }
 
+/** What is waiting for the next working morning. */
+async function handleQueue(chatId: number) {
+  if (!schedulingAvailable()) {
+    await say(chatId, "Scheduling needs Upstash configured.");
+    return;
+  }
+
+  const queued = await loadQueue(chatId);
+  if (!queued.length) {
+    await say(chatId, "Nothing queued.");
+    return;
+  }
+
+  const lines = queued.map(
+    (d, i) => `${i + 1}. ${d.company || d.to[0] || "Unknown"} — ${d.role || "role"}`,
+  );
+  await say(
+    chatId,
+    [`⏰ ${queued.length} going out ${describeWindow()}`, "", lines.join(NL)].join(NL),
+    {
+      reply_markup: {
+        inline_keyboard: [[{ text: "🗑 Cancel all", callback_data: "unqueue" }]],
+      },
+    },
+  );
+}
+
 /** The reply doubles as the store, so its shape has to be parseable. */
 function renderDraft(company: string, role: string, to: string[], subject: string, body: string) {
   const header = [company, role].filter(Boolean).join(" — ") || "Job application";
@@ -307,6 +341,8 @@ const HELP = `Two things I can do.
    This writes a short "do you have openings?" email instead.
 
 I also check every weekday morning for applications that have gone quiet for a week, and offer to nudge them once. Ask any time with /followups.
+
+Every draft also has a ⏰ button that holds it until the next working morning, which reads better than mail sent at midnight. /queue shows what is waiting.
 
 /status shows what the server actually has configured.`;
 
@@ -361,6 +397,11 @@ async function handleMessage(message: TgMessage) {
   const text = (message.text ?? message.caption ?? "").trim();
   if (/^\/(start|help)\b/.test(text)) {
     await say(chatId, HELP);
+    return;
+  }
+
+  if (/^\/queue\b/i.test(text)) {
+    await handleQueue(chatId);
     return;
   }
 
@@ -504,7 +545,12 @@ async function handleMessage(message: TgMessage) {
 
     await say(chatId, draft + warning, {
       reply_markup: {
-        inline_keyboard: [[{ text: "✉️ Send it", callback_data: "send" }]],
+        inline_keyboard: [
+          [{ text: "✉️ Send it now", callback_data: "send" }],
+          ...(schedulingAvailable()
+            ? [[{ text: `⏰ Send ${describeWindow()}`, callback_data: "later" }]]
+            : []),
+        ],
       },
     });
 
@@ -566,7 +612,10 @@ async function refreshSummary(chatId: number) {
     {
       reply_markup: {
         inline_keyboard: [
-          [{ text: `📤 Send all ${ready.length}`, callback_data: "sendall" }],
+          [{ text: `📤 Send all ${ready.length} now`, callback_data: "sendall" }],
+          ...(schedulingAvailable()
+            ? [[{ text: `⏰ Send ${describeWindow()}`, callback_data: "schedule" }]]
+            : []),
           [{ text: "🗑 Clear the batch", callback_data: "clearbatch" }],
         ],
       },
@@ -601,6 +650,64 @@ async function handleCallback(query: NonNullable<TgUpdate["callback_query"]>) {
 
   if (query.data === "sendall") {
     await handleSendAll(chatId, message.message_id, answer);
+    return;
+  }
+
+  if (query.data === "unqueue") {
+    await clearQueue(chatId);
+    await answer("Queue cleared");
+    await tg("editMessageText", {
+      chat_id: chatId,
+      message_id: message.message_id,
+      text: "🗑 Queue cleared. Nothing was sent.",
+    });
+    return;
+  }
+
+  if (query.data === "schedule") {
+    const batch = await loadBatch(chatId);
+    const ready = (batch?.drafts ?? []).filter((d) => d.to.length);
+    if (!ready.length) {
+      await answer("Nothing in this batch to schedule.");
+      return;
+    }
+
+    const total = await queueDrafts(chatId, ready);
+    await clearBatch(chatId);
+    await answer(`Queued ${ready.length}`);
+    await tg("editMessageText", {
+      chat_id: chatId,
+      message_id: message.message_id,
+      text:
+        `⏰ ${ready.length} queued — going out ${describeWindow()}.${NL}${NL}` +
+        `${total} waiting in all. /queue to see them, or call it off.`,
+    });
+    return;
+  }
+
+  if (query.data === "later") {
+    const parsed = parseDraft(message.text ?? "");
+    if (!parsed?.to.length) {
+      await answer("Could not read that draft.");
+      return;
+    }
+
+    await queueDrafts(chatId, [
+      {
+        company: parsed.company,
+        role: parsed.role,
+        to: parsed.to,
+        subject: parsed.subject,
+        body: parsed.body,
+      },
+    ]);
+    await answer("Queued");
+    await tg("editMessageText", {
+      chat_id: chatId,
+      message_id: message.message_id,
+      text: `⏰ Queued for ${describeWindow()}${NL}${NL}${message.text}`,
+      disable_web_page_preview: true,
+    });
     return;
   }
 
