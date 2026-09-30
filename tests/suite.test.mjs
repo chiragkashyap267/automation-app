@@ -44,6 +44,10 @@ const {
   recordSend,
   isSettled,
   describeFamily,
+  profileFingerprint,
+  recipeProblems,
+  checkExperience,
+  statedYearsIn,
 } = await import("./.bundle.mjs");
 
 let pass = 0;
@@ -649,6 +653,87 @@ check(
   describeFamily("frontend|react+typescript|mid"),
   "Frontend · React, Typescript · Mid",
 );
+
+section("experience that contradicts itself");
+{
+  // The reported bug: the years field was changed to 1 and every email kept
+  // saying 2, because the prompt makes the resume the source of truth and
+  // the resume summary still said "2+ years".
+  const base = {
+    fullName: "Chirag Kashyap", headline: "Full Stack Developer", skills: "React, Node",
+    extraNotes: "", tone: "warm", signOff: "Best regards",
+  };
+  const clash = checkExperience({
+    ...base, yearsExperience: "1",
+    resumeText: "SUMMARY\nFull-stack developer with 2+ years of experience building web products.",
+  });
+  check("the contradiction is caught", clash.mismatch, true);
+  check("it names what the resume says", clash.message.includes("2 years"), true);
+  check("and what the field says", clash.message.includes("1 year"), true);
+  check("it says which one wins", clash.message.includes("follow the resume"), true);
+
+  check("agreement is silent", checkExperience({
+    ...base, yearsExperience: "2",
+    resumeText: "Developer with 2+ years of experience.",
+  }).mismatch, false);
+
+  check("no resume text, nothing to contradict", checkExperience({
+    ...base, yearsExperience: "1", resumeText: "",
+  }).mismatch, false);
+
+  check("no field set, nothing to contradict", checkExperience({
+    ...base, yearsExperience: "",
+    resumeText: "Developer with 2+ years of experience.",
+  }).mismatch, false);
+
+  // A job that lasted three years is a duration, not a claim about total
+  // experience; flagging those would make the warning worthless.
+  check("a job duration is not a claim", statedYearsIn("Backend Engineer at Acme for 3 years."), []);
+  check("the summary phrasing is", statedYearsIn("2+ years of experience in React"), [2]);
+  check("reversed phrasing too", statedYearsIn("Experience: 4 years"), [4]);
+}
+
+section("recipes remember which profile wrote them");
+{
+  const oldProfile = { fullName: "C K", headline: "Dev", yearsExperience: "2", skills: "React", resumeText: "r", extraNotes: "", tone: "warm", signOff: "Best" };
+  const edited = { ...oldProfile, yearsExperience: "1" };
+
+  const a = profileFingerprint(oldProfile);
+  const b = profileFingerprint(edited);
+  check("a changed profile changes the fingerprint", a === b, false);
+  check("the same profile is stable", profileFingerprint(oldProfile), a);
+  // A different phone number does not make stored wording wrong.
+  check("irrelevant fields are ignored", profileFingerprint({ ...oldProfile, phone: "999" }), a);
+  check("whitespace is ignored", profileFingerprint({ ...oldProfile, skills: " React  " }), a);
+
+  const facts = {
+    company: "Acme", role: "Backend Engineer", location: "Noida", reqId: "", recipients: ["a@b.com"],
+    contactName: "", highlights: [], seniority: "", confidence: "high", notes: "",
+  };
+  const recipe = deriveRecipe(facts, "Application for Backend Engineer", "I have 2 years of experience.", a);
+  check("the fingerprint is stored", recipe.profileFingerprint, a);
+  check("it is found for the same profile", findRecipe([recipe], facts, a)?.key, recipe.key);
+  // This is the actual fix: a stale recipe is not a saving, it is last
+  // month's claims sent for free.
+  check("and refused after an edit", findRecipe([recipe], facts, b), null);
+  check("no fingerprint given means no check", findRecipe([recipe], facts)?.key, recipe.key);
+}
+
+section("a rendered recipe is checked before it is trusted");
+{
+  const profile = {
+    fullName: "C K", resumeText: "Built React and Node products at Freelance for two years.",
+    skills: "React, Node", headline: "Dev", extraNotes: "", portfolio: "", linkedin: "", github: "", email: "",
+  };
+  check("a clean render passes", recipeProblems("I build React and Node products.", "Application", profile), []);
+  check("an unfilled slot is caught", recipeProblems("Hello {{company}} team.", "Application", profile).length, 1);
+  check("a placeholder is caught", recipeProblems("Hello [Company Name].", "Application", profile).length, 1);
+  check(
+    "a claim the resume lost is caught",
+    recipeProblems("At Freelance I ran Selenium regression suites.", "Application", profile).length,
+    1,
+  );
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

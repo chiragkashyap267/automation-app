@@ -16,7 +16,9 @@ import {
   rememberRecipe,
   renderRecipe,
   familyKey,
+  profileFingerprint,
 } from "./recipes";
+import { recipeProblems } from "./validate";
 import type { Draft, DraftSource, Profile, SourceItem } from "./types";
 
 /** Serverless request bodies are capped at 4.5 MB; stay clear of the edge. */
@@ -131,6 +133,8 @@ export async function processGroup(
     writeCalls: 0,
   };
 
+  const fingerprint = profileFingerprint(profile);
+
   try {
     const hash = hashInput(images, texts);
     let jobs: ApiJob[] | null = readExtractCache(hash);
@@ -210,16 +214,24 @@ export async function processGroup(
       // The full-mode read already wrote the email.
       if (job.subject && job.body) {
         outcome.drafts.push(toDraft(groupId, facts, job.subject, job.body, "ai"));
-        rememberRecipe(facts, job.subject, job.body);
+        rememberRecipe(facts, job.subject, job.body, fingerprint);
         continue;
       }
 
-      const recipe = findRecipe(loadRecipes(), facts);
+      // A recipe from a different profile is not a saving, it is last
+      // month's claims sent for free.
+      const recipe = findRecipe(loadRecipes(), facts, fingerprint);
       if (recipe) {
         const rendered = renderRecipe(recipe, facts);
-        noteRecipeUse(recipe.key);
-        outcome.drafts.push(toDraft(groupId, facts, rendered.subject, rendered.body, "recipe"));
-        continue;
+        const problems = recipeProblems(rendered.body, rendered.subject, profile);
+
+        if (!problems.length) {
+          noteRecipeUse(recipe.key);
+          outcome.drafts.push(toDraft(groupId, facts, rendered.subject, rendered.body, "recipe"));
+          continue;
+        }
+        // Checking was free; paying for a rewrite beats sending this.
+        console.warn(`[recipe] ${recipe.key} rejected: ${problems.join("; ")}`);
       }
 
       if (localOnly) {
@@ -234,7 +246,7 @@ export async function processGroup(
       });
       outcome.writeCalls += 1;
       outcome.drafts.push(toDraft(groupId, facts, written.subject, written.body, "ai"));
-      rememberRecipe(facts, written.subject, written.body);
+      rememberRecipe(facts, written.subject, written.body, fingerprint);
     }
 
     // Only cache a read that produced something usable.
@@ -302,7 +314,7 @@ export async function rewriteDraft(draft: Draft, profile: Profile): Promise<Draf
     profile,
     facts,
   });
-  rememberRecipe(facts, written.subject, written.body);
+  rememberRecipe(facts, written.subject, written.body, profileFingerprint(profile));
 
   const subject = normalizePlainText(written.subject);
   const body = normalizePlainText(written.body);

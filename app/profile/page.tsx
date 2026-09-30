@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRef, useState } from "react";
 import { fileToBase64 } from "@/lib/image";
 import { buildSignature } from "@/lib/signature";
+import { checkExperience } from "@/lib/experience";
 import { useProfile } from "@/lib/store";
 import type { Profile } from "@/lib/types";
 
@@ -12,6 +13,7 @@ const MAX_ATTACHMENT = 4 * 1024 * 1024;
 export default function ProfilePage() {
   const { profile, update, ready } = useProfile();
   const [showPassword, setShowPassword] = useState(false);
+  const experience = checkExperience(profile);
   const [fileError, setFileError] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -128,6 +130,14 @@ export default function ProfilePage() {
             placeholder="3"
           />
         </Grid>
+        {experience.mismatch && (
+          <p
+            className="rounded-xl px-3.5 py-2.5 text-[12.5px] leading-relaxed"
+            style={{ background: "var(--danger-soft)", color: "var(--danger)" }}
+          >
+            {experience.message}
+          </p>
+        )}
       </Section>
 
       <Section

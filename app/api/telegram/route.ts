@@ -3,7 +3,8 @@ import { allowed, botToken, fileUrl, say, tg } from "@/lib/telegramApi";
 import { providerStatus, readJobs, reviseIfNeeded, writeOutreach } from "@/lib/llm";
 import { buildTaskText, companyFromEmail } from "@/lib/llm/prompt";
 import { explainSmtpError, preflight, sendMail } from "@/lib/mailer";
-import { loadBotProfile, sharedProfileAvailable } from "@/lib/sharedProfile";
+import { loadBotProfile, sharedProfileExists } from "@/lib/sharedProfile";
+import { checkExperience } from "@/lib/experience";
 import {
   addToBatch,
   batchingAvailable,
@@ -184,6 +185,13 @@ async function handleStatus(chatId: number) {
     `  ${pool("groq", providers.groq)}`,
     `  ${pool("cerebras", providers.cerebras)}`,
     "",
+    "WRITING FROM",
+    `  ${me.fullName || "no name set"}, ${me.headline || "no headline"}`,
+    `  experience: ${me.yearsExperience || "not set"} year(s)`,
+    ...(checkExperience(me).mismatch
+      ? [`  ⚠️ ${checkExperience(me).message}`]
+      : []),
+    "",
     "SENDING",
     `  gmail: ${me.gmailUser || "GMAIL_USER not set"}`,
     `  password: ${me.gmailAppPassword ? "set" : "GMAIL_APP_PASSWORD not set"}`,
@@ -210,7 +218,7 @@ async function handleStatus(chatId: number) {
       `  sent today: ${today}`,
       `  logged for follow-up: ${outbox.length}`,
       `  already nudged: ${nudged}`,
-      `  profile: ${sharedProfileAvailable() ? "shared from the app" : "built-in seed"}`,
+      `  profile: ${(await sharedProfileExists()) ? "shared from the app" : "built-in seed"}`,
     );
   }
 

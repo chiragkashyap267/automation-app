@@ -30,9 +30,18 @@ export type Recipe = {
   createdAt: number;
   lastUsedAt: number;
   lastRefinedAt: number;
+  /**
+   * Which version of the profile this wording came from. A recipe stores the
+   * prose verbatim, so anything the profile says about the candidate — years
+   * of experience, the headline, the resume itself — is frozen into it. When
+   * the profile changes the recipe is stale, and reusing it would quietly
+   * send last month's claims.
+   */
+  profileFingerprint: string;
 };
 
 const RECIPE_DEFAULTS = {
+  profileFingerprint: "",
   uses: 0,
   sends: 0,
   sentClean: 0,
@@ -88,6 +97,45 @@ function normalizeSeniority(value: string): string {
 }
 
 /** Two postings sharing this key get the same email skeleton. */
+/**
+ * A short digest of everything in the profile that shapes the wording.
+ *
+ * Contact details and the Gmail password are left out: changing a phone
+ * number does not make a stored email wrong, and throwing away every recipe
+ * over it would cost API calls for nothing.
+ */
+export function profileFingerprint(profile: {
+  fullName?: string;
+  headline?: string;
+  yearsExperience?: string;
+  skills?: string;
+  resumeText?: string;
+  extraNotes?: string;
+  tone?: string;
+  signOff?: string;
+}): string {
+  const material = [
+    profile.fullName,
+    profile.headline,
+    profile.yearsExperience,
+    profile.skills,
+    profile.resumeText,
+    profile.extraNotes,
+    profile.tone,
+    profile.signOff,
+  ]
+    .map((v) => (v ?? "").trim().toLowerCase().replace(/\s+/g, " "))
+    .join("|");
+
+  // djb2: short, stable across reloads, and collisions only cost a stale
+  // recipe surviving one edit.
+  let hash = 5381;
+  for (let i = 0; i < material.length; i++) {
+    hash = ((hash << 5) + hash + material.charCodeAt(i)) >>> 0;
+  }
+  return hash.toString(36);
+}
+
 export function familyKey(facts: Facts): string {
   const haystack = `${facts.role} ${facts.highlights.join(" ")}`;
 
@@ -142,10 +190,16 @@ function slotify(text: string, facts: Facts): string {
   return out;
 }
 
-export function deriveRecipe(facts: Facts, subject: string, body: string): Recipe {
+export function deriveRecipe(
+  facts: Facts,
+  subject: string,
+  body: string,
+  fingerprint = "",
+): Recipe {
   const now = Date.now();
   return {
     ...RECIPE_DEFAULTS,
+    profileFingerprint: fingerprint,
     key: familyKey(facts),
     subjectTemplate: slotify(subject, facts),
     bodyTemplate: slotify(body, facts),
@@ -326,21 +380,43 @@ export function saveRecipes(recipes: Recipe[]) {
   writeJson(RECIPES_KEY, trimmed);
 }
 
-export function findRecipe(recipes: Recipe[], facts: Facts): Recipe | null {
+export function findRecipe(
+  recipes: Recipe[],
+  facts: Facts,
+  fingerprint?: string,
+): Recipe | null {
   const key = familyKey(facts);
-  return recipes.find((r) => r.key === key) ?? null;
+  const match = recipes.find((r) => r.key === key);
+  if (!match) return null;
+
+  // A recipe written from a different profile is not free, it is wrong.
+  // Letting it through is how an edited profile keeps sending old claims.
+  if (fingerprint !== undefined && match.profileFingerprint !== fingerprint) return null;
+
+  return match;
 }
 
 /** Newly written email becomes (or refreshes) the recipe for its family. */
-export function rememberRecipe(facts: Facts, subject: string, body: string): Recipe[] {
+export function rememberRecipe(
+  facts: Facts,
+  subject: string,
+  body: string,
+  fingerprint = "",
+): Recipe[] {
   const recipes = loadRecipes();
-  const fresh = deriveRecipe(facts, subject, body);
+  const fresh = deriveRecipe(facts, subject, body, fingerprint);
   const existing = recipes.find((r) => r.key === fresh.key);
 
   if (existing) {
     existing.subjectTemplate = fresh.subjectTemplate;
     existing.bodyTemplate = fresh.bodyTemplate;
     existing.lastUsedAt = Date.now();
+    // Rewritten from a newer profile: the streak it built no longer
+    // describes this wording.
+    if (existing.profileFingerprint !== fingerprint) {
+      existing.profileFingerprint = fingerprint;
+      existing.cleanStreak = 0;
+    }
   } else {
     recipes.push(fresh);
   }

@@ -17,3 +17,6 @@ export {
 export { localExtract } from "../lib/localExtract";
 export { validateDraft, applyFixes, countBySeverity } from "../lib/validate";
 export { editRatio, recordSend, isSettled, describeFamily, deleteRecipe } from "../lib/recipes";
+export { profileFingerprint } from "../lib/recipes";
+export { recipeProblems } from "../lib/validate";
+export { checkExperience, statedYearsIn } from "../lib/experience";

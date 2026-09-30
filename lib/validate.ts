@@ -1,5 +1,6 @@
 import { cleanRecipient, isGenericMailbox } from "./email";
 import { priorApplication } from "./history";
+import { checkExperience } from "./experience";
 import type { Draft, Profile } from "./types";
 
 /**
@@ -295,6 +296,13 @@ export function validateDraft(draft: Draft, profile: Profile): Issue[] {
     });
   }
 
+  // Editing the years field alone changes nothing, because the prompt makes
+  // the resume the source of truth. Say so where the email is being read.
+  const experience = checkExperience(profile);
+  if (experience.mismatch) {
+    issues.push({ id: "experience-mismatch", severity: "warning", message: experience.message });
+  }
+
   const invented = unsupportedClaims(draft, profile);
   if (invented.length) {
     push({
@@ -467,4 +475,28 @@ export function countBySeverity(issues: Issue[]) {
     warnings: issues.filter((i) => i.severity === "warning").length,
     fixable: issues.filter((i) => i.fix).length,
   };
+}
+
+/**
+ * Whether a recipe-rendered email is safe to send without the model.
+ *
+ * A recipe is stored prose with a few slots filled in, so the two ways it can
+ * go wrong are a slot that did not get filled and a claim that no longer
+ * matches the profile. Both are cheap to check and the whole point of the
+ * recipe layer is that checking costs nothing.
+ */
+export function recipeProblems(body: string, subject: string, profile: Profile): string[] {
+  const problems: string[] = [];
+  const text = `${subject}\n${body}`;
+
+  const slot = text.match(/\{\{\s*\w+\s*\}\}/);
+  if (slot) problems.push(`an unfilled slot (${slot[0]})`);
+
+  const placeholder = text.match(/\[(?:your|company|role|name|position)[^\]]*\]/i);
+  if (placeholder) problems.push(`a placeholder (${placeholder[0]})`);
+
+  const invented = unsupportedClaimsIn(body, profile);
+  if (invented.length) problems.push(`claims not in the resume (${invented.join(", ")})`);
+
+  return problems;
 }

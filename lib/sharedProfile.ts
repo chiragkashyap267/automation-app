@@ -51,3 +51,15 @@ export async function loadBotProfile(): Promise<Profile> {
 export function sharedProfileAvailable(): boolean {
   return kvConfigured();
 }
+
+/**
+ * Whether the app has actually mirrored a profile yet.
+ *
+ * Distinct from the store being configured: if the browser never reached
+ * /api/profile the bot is quietly writing from the built-in seed, and the
+ * only symptom is emails that ignore an edit.
+ */
+export async function sharedProfileExists(): Promise<boolean> {
+  if (!kvConfigured()) return false;
+  return (await kvGet<SharedProfile>(KEY)) !== null;
+}
