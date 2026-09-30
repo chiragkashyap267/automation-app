@@ -1,3 +1,4 @@
+import type { Lead, ServicesProfile } from "../services";
 import {
   EXTRACT_SYSTEM_PROMPT,
   ExtractSchema,
@@ -6,14 +7,16 @@ import {
   GEMINI_FULL_SCHEMA,
   JobsSchema,
   OUTREACH_SYSTEM_PROMPT,
+  PITCH_SYSTEM_PROMPT,
   REVISE_SYSTEM_PROMPT,
-  buildReviseText,
   WRITE_SYSTEM_PROMPT,
-  buildOutreachText,
-  type OutreachTarget,
   WrittenSchema,
+  buildOutreachText,
+  buildPitchText,
+  buildReviseText,
   buildWriteText,
   type Facts,
+  type OutreachTarget,
   type Written,
 } from "./prompt";
 import { geminiPool, markFailure, markSuccess, type KeyFailure, type KeyState } from "./keyPool";
@@ -236,6 +239,11 @@ export function writeWithGemini(profile: Profile, facts: Facts): Promise<Written
 
 export function outreachWithGemini(profile: Profile, target: OutreachTarget): Promise<Written> {
   return complete(OUTREACH_SYSTEM_PROMPT, buildOutreachText(profile, target));
+}
+
+/** A freelance service pitch. Same plumbing, a very different email. */
+export function pitchWithGemini(services: ServicesProfile, lead: Lead): Promise<Written> {
+  return complete(PITCH_SYSTEM_PROMPT, buildPitchText(services, lead));
 }
 
 export function reviseWithGemini(

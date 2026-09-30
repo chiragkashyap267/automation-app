@@ -369,6 +369,9 @@ export default function HomePage() {
           <Link href="/insights" className="btn btn-ghost btn-sm" aria-label="Insights">
             📈
           </Link>
+          <Link href="/services" className="btn btn-ghost btn-sm" aria-label="Freelance services">
+            💼
+          </Link>
           <Link href="/profile" className="btn btn-ghost btn-sm">
             ⚙ Details
           </Link>

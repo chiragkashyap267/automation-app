@@ -1,4 +1,9 @@
 import { z } from "zod";
+import { companyFromEmail } from "@/lib/email";
+import type { Lead, ServicesProfile } from "@/lib/services";
+
+// Re-exported: it used to live here and several callers still import it.
+export { companyFromEmail };
 import type { Profile } from "@/lib/types";
 
 /* ────────────────────────── schemas ────────────────────────── */
@@ -209,18 +214,6 @@ export function buildTaskText(profile: Profile, pastedText: string[]): string {
 }
 
 /** A recruiting address rarely names the company; the domain almost always does. */
-export function companyFromEmail(email: string): string {
-  const domain = (email.split("@")[1] ?? "").toLowerCase();
-  const generic = /^(gmail|yahoo|outlook|hotmail|protonmail|icloud|rediffmail|zoho)\./;
-  if (!domain || generic.test(domain)) return "";
-
-  const label = domain.split(".")[0];
-  if (!label || label.length < 2 || /^(mail|jobs|careers|hr|info|apply|contact|recruit)$/.test(label)) {
-    return "";
-  }
-  return label.replace(/[-_]/g, " ").replace(/\b[a-z]/g, (c) => c.toUpperCase());
-}
-
 export type OutreachTarget = {
   email: string;
   /** What the candidate is asking about, e.g. "Software Engineer". */
@@ -289,4 +282,61 @@ export function buildWriteText(profile: Profile, facts: Facts): string {
   ].join("\n");
 
   return `${buildProfileBlock(profile)}\n\nTHE POSTING\n${posting}\n\nWrite the subject and body for this one posting.`;
+}
+
+/* ────────────────────── freelance service pitches ────────────────────── */
+
+export const PITCH_SYSTEM_PROMPT = `Write a short cold email offering a freelance service to a business. This is NOT a job application: the sender is a supplier offering work, not a candidate asking for a job. Never say "I am applying", never mention a role, a vacancy, a resume or a CV.
+
+- subject: plain and concrete, naming the service and who it is for. "Packaging design for Freshbite" or "Website for your new store". Never "Business proposal", "Collaboration opportunity" or anything that reads like bulk mail.
+- body: plain text, no markdown, no bullet characters. Paragraphs separated by a blank line.
+- LENGTH: 60-90 words. Three short paragraphs at most.
+- The FIRST line is the salutation on its own, followed by a blank line. Use the contact's name if given, otherwise "Hello,".
+- Line 1: say in one sentence what you do and why you are writing to THEM specifically, using what the lead says they need. If the lead says nothing specific, say plainly that you work with businesses like theirs.
+- Then ONE short paragraph of proof, drawn ONLY from the sender's stated past work. Real, specific, no numbers that are not given to you.
+- Close with a single low-friction ask: a reply, a look at the portfolio, or a short call. Never demand a meeting.
+- Mention price ONLY if a starting price is given, and then as a range or a "from", never a quote.
+
+HARD RULES
+- Never invent a client name, a result, a percentage or a timeline. If the sender's proof does not name it, it does not exist.
+- Never praise the business's products, brand or growth. You have not seen them, and false flattery is the clearest sign of a bulk email.
+- Never claim to have looked at their website, socials or store unless the lead text says so.
+- Do not stack services. Lead with the ONE the lead needs; mention others in at most a half sentence.
+
+CRITICAL — do NOT write a sign-off, your name, phone, email, or links at the end. The body must STOP at the closing ask. A signature is appended automatically.`;
+
+export function buildServicesBlock(p: ServicesProfile): string {
+  const lines: [string, string][] = [
+    ["Name", p.fullName],
+    ["Business name", p.businessName],
+    ["What they do", p.tagline],
+    ["Services offered", p.services],
+    ["Based in", p.city],
+    ["Starting price", p.startingPrice],
+  ];
+
+  const facts = lines
+    .filter(([, v]) => v && v.trim())
+    .map(([k, v]) => `${k}: ${v.trim()}`)
+    .join("\n");
+
+  const proof = p.proof.trim()
+    ? `PAST WORK (the only thing this email may claim):\n${p.proof.trim()}`
+    : "(No past work given. Do not claim any. Write from the services list alone.)";
+
+  return `THE SENDER\n${facts}\n\n${proof}\n\nTONE: ${TONE_GUIDE[p.tone]}`;
+}
+
+export function buildPitchText(services: ServicesProfile, lead: Lead): string {
+  const about = [
+    `Sending to: ${lead.email}`,
+    lead.company ? `Business: ${lead.company}` : "Business: unknown",
+    lead.contactName ? `Contact: ${lead.contactName}` : "Contact: unknown",
+    `What they need: ${lead.need || "(not stated — keep it general and short)"}`,
+    lead.source ? `Where this lead came from: ${lead.source}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return `${buildServicesBlock(services)}\n\nTHE LEAD\n${about}\n\nWrite the subject and body for this pitch.`;
 }

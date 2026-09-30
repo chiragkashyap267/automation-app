@@ -1,10 +1,12 @@
-import { outreachWithClaude, reviseWithClaude, runClaude, writeWithClaude } from "./claude";
-import { outreachWithGemini, reviseWithGemini, runGemini, writeWithGemini } from "./gemini";
-import { outreachWithGroq, readWithGroq, reviseWithGroq, writeWithGroq } from "./groq";
-import { outreachWithCerebras, reviseWithCerebras, writeWithCerebras } from "./cerebras";
+import { outreachWithClaude, pitchWithClaude, reviseWithClaude, runClaude, writeWithClaude } from "./claude";
+import { outreachWithGemini, pitchWithGemini, reviseWithGemini, runGemini, writeWithGemini } from "./gemini";
+import { outreachWithGroq, pitchWithGroq, readWithGroq, reviseWithGroq, writeWithGroq } from "./groq";
+import { outreachWithCerebras, pitchWithCerebras, reviseWithCerebras, writeWithCerebras } from "./cerebras";
 import { cerebrasPool, geminiPool, groqPool } from "./keyPool";
 import { dedupeJobs } from "@/lib/dedupe";
-import { unsupportedClaimsIn } from "@/lib/validate";
+import { inventedClientsIn, unsupportedClaimsIn } from "@/lib/validate";
+import type { Lead, ServicesProfile } from "@/lib/services";
+import { EMPTY_PROFILE } from "@/lib/types";
 import type { Facts, OutreachTarget, Written } from "./prompt";
 import type { Profile } from "@/lib/types";
 
@@ -298,4 +300,119 @@ export async function reviseIfNeeded(
   }
 
   return { written, problems, revised: false };
+}
+
+/* ────────────────────── freelance service pitches ────────────────────── */
+
+const PITCH_MIN_WORDS = 40;
+const PITCH_MAX_WORDS = 120;
+
+/**
+ * What makes a pitch bad, checked locally and for free.
+ *
+ * The failure mode here is not the same as an application's. A pitch goes
+ * wrong by inventing a client, praising a business the sender has never
+ * seen, or sounding like the same mail sent to a thousand addresses — which
+ * is both useless and the fastest way to get the account flagged.
+ */
+function pitchProblems(written: Written, services: ServicesProfile): string[] {
+  const problems: string[] = [];
+  const body = written.body;
+
+  const invented = inventedClientsIn(body, services);
+  if (invented.length) {
+    problems.push(
+      `The email claims work for "${invented.join('", "')}", which is not in the past work ` +
+        `given. Remove those names, or describe the work without naming a client.`,
+    );
+  }
+
+  const words = body.trim().split(/\s+/).filter(Boolean).length;
+  if (words > PITCH_MAX_WORDS) problems.push(`The body is ${words} words. Cut it to 60-90.`);
+  if (words < PITCH_MIN_WORDS) problems.push(`The body is only ${words} words. Too thin to act on.`);
+
+  // Praise for a business nobody has looked at is the clearest tell of a
+  // bulk mail, and the recipient always knows.
+  if (/\b(love|admire|impressed by|big fan of|huge fan)\b/i.test(body)) {
+    problems.push("The email praises the business. Remove it — you have not seen their work.");
+  }
+  if (/\b(I came across your (website|instagram|page|store)|I was browsing|I visited your)\b/i.test(body)) {
+    problems.push("The email claims to have looked at their site or socials. Remove that claim.");
+  }
+  if (/\b(apply|application|resume|CV|vacancy|position)\b/i.test(body)) {
+    problems.push("This reads like a job application. It is an offer of services, not a request for a job.");
+  }
+  if (/(best regards|sincerely|kind regards|warm regards)/i.test(body)) {
+    problems.push("The body ends with a sign-off. Remove it — one is appended automatically.");
+  }
+
+  return problems;
+}
+
+async function pitchWith(
+  writer: WriterName,
+  services: ServicesProfile,
+  lead: Lead,
+): Promise<Written> {
+  if (writer === "groq") return pitchWithGroq(services, lead);
+  if (writer === "cerebras") return pitchWithCerebras(services, lead);
+  if (writer === "claude") return pitchWithClaude(services, lead);
+  return pitchWithGemini(services, lead);
+}
+
+export async function writePitch(
+  services: ServicesProfile,
+  lead: Lead,
+): Promise<{ written: Written; writer: WriterName; problems: string[] }> {
+  const candidates = writers();
+  if (!candidates.length) throw new Error("No key that can write emails is set.");
+
+  let firstError: unknown;
+
+  for (const writer of candidates) {
+    let written: Written;
+    try {
+      written = await pitchWith(writer, services, lead);
+    } catch (err) {
+      firstError ??= err;
+      console.error(`[pitch] ${writer} failed, trying next`, err instanceof Error ? err.message : err);
+      continue;
+    }
+
+    const problems = pitchProblems(written, services);
+    if (!problems.length) return { written, writer, problems: [] };
+
+    // One paid retry, kept only if it is actually better.
+    console.warn(`[pitch] ${writer} produced ${problems.length} problem(s), revising`);
+    try {
+      const fixed = await reviseWith(
+        writer,
+        // The reviser speaks Profile and Facts; a pitch has neither, so it
+        // is handed the nearest honest equivalents.
+        { ...EMPTY_PROFILE, fullName: services.fullName, resumeText: services.proof },
+        {
+          company: lead.company,
+          role: lead.need,
+          location: "",
+          reqId: "",
+          recipients: [lead.email],
+          contactName: lead.contactName,
+          highlights: [],
+          seniority: "",
+          confidence: "high",
+          notes: "",
+        },
+        written,
+        problems,
+      );
+      const left = pitchProblems(fixed, services);
+      if (left.length < problems.length) return { written: fixed, writer, problems: left };
+    } catch (err) {
+      console.error("[pitch] revision failed", err instanceof Error ? err.message : err);
+    }
+
+    return { written, writer, problems };
+  }
+
+  throw firstError instanceof Error ? firstError : new Error("Could not write this pitch.");
 }

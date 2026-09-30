@@ -1,17 +1,20 @@
+import type { Lead, ServicesProfile } from "../services";
 import {
   EXTRACT_SYSTEM_PROMPT,
-  OUTREACH_SYSTEM_PROMPT,
-  REVISE_SYSTEM_PROMPT,
-  buildReviseText,
-  buildOutreachText,
-  type OutreachTarget,
   ExtractSchema,
   FULL_SYSTEM_PROMPT,
   JobsSchema,
+  OUTREACH_SYSTEM_PROMPT,
+  PITCH_SYSTEM_PROMPT,
+  REVISE_SYSTEM_PROMPT,
   WRITE_SYSTEM_PROMPT,
   WrittenSchema,
+  buildOutreachText,
+  buildPitchText,
+  buildReviseText,
   buildWriteText,
   type Facts,
+  type OutreachTarget,
   type Written,
 } from "./prompt";
 import { groqPool, markFailure, markSuccess, type KeyFailure, type KeyState } from "./keyPool";
@@ -196,6 +199,11 @@ export function outreachWithGroq(profile: Profile, target: OutreachTarget): Prom
   return complete(`${OUTREACH_SYSTEM_PROMPT}
 
 ${JSON_SHAPE}`, buildOutreachText(profile, target));
+}
+
+/** A freelance service pitch. Same plumbing, a very different email. */
+export function pitchWithGroq(services: ServicesProfile, lead: Lead): Promise<Written> {
+  return complete(`${PITCH_SYSTEM_PROMPT}\n\n${JSON_SHAPE}`, buildPitchText(services, lead));
 }
 
 const JOBS_SHAPE = `Return a JSON object with one key "jobs", an array. Each entry must have exactly these keys: "company" (string), "role" (string), "location" (string), "reqId" (string), "recipients" (array of strings), "contactName" (string), "highlights" (array of strings), "seniority" (string), "confidence" ("high" | "medium" | "low"), "notes" (string)`;

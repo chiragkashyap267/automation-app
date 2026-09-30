@@ -537,3 +537,35 @@ export function recipeProblems(body: string, subject: string, profile: Profile):
 
   return problems;
 }
+
+/**
+ * Client names a pitch claims that the sender's own past work never mentions.
+ *
+ * The resume plays this role for applications; for freelance work the
+ * equivalent lie is "we did the packaging for Haldiram" when you did not.
+ * Only names in a claiming context count — "worked with X", "clients like
+ * X" — because a pitch legitimately names the business it is being sent to.
+ */
+const CLAIM_CONTEXT =
+  /\b(?:worked (?:with|for)|clients? (?:like|include[sd]?|such as)|designed for|built for|delivered for|partnered with|done for)\s+([A-Z][\w&.'-]*(?:\s+[A-Z][\w&.'-]*){0,2})/g;
+
+export function inventedClientsIn(
+  body: string,
+  services: { proof?: string; portfolio?: string; businessName?: string; fullName?: string },
+): string[] {
+  const known = [services.proof, services.portfolio, services.businessName, services.fullName]
+    .join(" ")
+    .toLowerCase();
+
+  const found = new Set<string>();
+  for (const match of body.matchAll(CLAIM_CONTEXT)) {
+    const name = match[1].trim().replace(/[.,]$/, "");
+    // Short or generic words are not client names.
+    if (name.length < 3 || /^(You|Your|Them|Their|Us|We|I|The|This|That|Brands?|Businesses)$/i.test(name)) {
+      continue;
+    }
+    if (!known.includes(name.toLowerCase())) found.add(name);
+  }
+
+  return [...found];
+}

@@ -1,6 +1,15 @@
 import { NextResponse } from "next/server";
 import { allowed, botToken, fileUrl, say, tg } from "@/lib/telegramApi";
-import { providerStatus, readJobs, reviseIfNeeded, writeEmail, writeOutreach } from "@/lib/llm";
+import {
+  providerStatus,
+  readJobs,
+  reviseIfNeeded,
+  writeEmail,
+  writeOutreach,
+  writePitch,
+} from "@/lib/llm";
+import { parseLead, servicesReady } from "@/lib/services";
+import { loadSharedServices } from "@/lib/sharedServices";
 import { buildTaskText, companyFromEmail, type Facts } from "@/lib/llm/prompt";
 import { explainSmtpError, preflight, sendMail } from "@/lib/mailer";
 import { loadBotProfile, sharedProfileExists } from "@/lib/sharedProfile";
@@ -228,6 +237,7 @@ async function handleStatus(chatId: number) {
       `  sent today: ${today}`,
       `  logged for follow-up: ${outbox.length}`,
       `  saved recipes: ${(await loadSharedRecipes()).length}`,
+      `  services profile: ${servicesReady(await loadSharedServices()) ? "ready for /pitch" : "not set up"}`,
       `  already nudged: ${nudged}`,
       `  profile: ${(await sharedProfileExists()) ? "shared from the app" : "built-in seed"}`,
     );
@@ -503,6 +513,86 @@ function readModeFor(recipes: Recipe[]): "extract" | "full" {
   return recipes.length ? "extract" : "full";
 }
 
+/**
+ * A freelance pitch, which is the other half of the business: selling a
+ * service to a company rather than asking one for a job.
+ *
+ * Deliberately one lead at a time and one tap per send. Cold pitches have
+ * worse deliverability than applications, and a burst of them is the
+ * fastest way to lose the account that everything else here depends on.
+ */
+async function handlePitch(chatId: number, text: string) {
+  const services = await loadSharedServices();
+
+  if (!servicesReady(services)) {
+    await say(
+      chatId,
+      "Set up the services profile first — open the app and fill in Services. " +
+        "I need at least your name, what you offer, and some real past work to point at.",
+    );
+    return;
+  }
+
+  const lead = parseLead(text);
+  if (!lead) {
+    await say(
+      chatId,
+      [
+        "Send me a lead with an email address in it. Either:",
+        "",
+        "  /pitch hello@brand.com they need packaging for a new snack range",
+        "",
+        "or paste the whole enquiry after /pitch and I will read it.",
+      ].join(NL),
+    );
+    return;
+  }
+
+  await tg("sendChatAction", { chat_id: chatId, action: "typing" });
+
+  let written;
+  let problems: string[] = [];
+  try {
+    ({ written, problems } = await writePitch(services, lead));
+  } catch (err) {
+    await say(chatId, `⚠️ ${err instanceof Error ? err.message : "Could not write that."}`);
+    return;
+  }
+
+  const signature = [
+    services.fullName || services.businessName,
+    services.tagline,
+    [services.portfolio, services.showreel].filter(Boolean).join("  |  "),
+    [services.phone, services.email].filter(Boolean).join("  |  "),
+  ]
+    .filter((line) => line && line.trim())
+    .join(NL);
+
+  const body = `${normalizePlainText(written.body)}${NL}${NL}${services.signOff || "Best regards"},${NL}${signature}`;
+  const subject = normalizePlainText(written.subject);
+  const draft = renderDraft(lead.company || "Pitch", lead.need.slice(0, 40), [lead.email], subject, body);
+
+  if (problems.length) {
+    await say(
+      chatId,
+      `${draft}${NL}${NL}⛔ Not sending this one:${NL}` +
+        problems.map((x) => `• ${x}`).join(NL),
+    );
+    return;
+  }
+
+  await say(chatId, draft, {
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: "✉️ Send it now", callback_data: "send" }],
+        ...(schedulingAvailable()
+          ? [[{ text: `⏰ Send ${describeWindow()}`, callback_data: "later" }]]
+          : []),
+      ],
+    },
+  });
+}
+
 /** The reply doubles as the store, so its shape has to be parseable. */
 function renderDraft(
   company: string,
@@ -561,6 +651,9 @@ const HELP = `Two things I can do.
 I also check every weekday morning for applications that have gone quiet for a week, and offer to nudge them once. Ask any time with /followups.
 
 Every draft also has a ⏰ button that holds it until the next working morning, which reads better than mail sent at midnight. /queue shows what is waiting.
+
+/pitch sells your freelance services to a lead instead of applying for a job:
+   /pitch hello@brand.com they need packaging for a new snack range
 
 /inbox reads the last week of mail for job descriptions people sent you directly, and drafts a reply inside their own thread.
 
@@ -643,6 +736,11 @@ async function handleMessage(message: TgMessage) {
   const text = (message.text ?? message.caption ?? "").trim();
   if (/^\/(start|help)\b/.test(text)) {
     await say(chatId, HELP);
+    return;
+  }
+
+  if (/^\/pitch\b/i.test(text)) {
+    await handlePitch(chatId, text);
     return;
   }
 

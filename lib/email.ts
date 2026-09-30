@@ -61,3 +61,19 @@ export function isGenericMailbox(address: string): boolean {
     local,
   );
 }
+
+/**
+ * "careers@freshbite.in" -> "Freshbite". Generic hosts and role mailboxes
+ * give nothing, because "Hr" is not a company name.
+ */
+export function companyFromEmail(email: string): string {
+  const domain = (email.split("@")[1] ?? "").toLowerCase();
+  const generic = /^(gmail|yahoo|outlook|hotmail|protonmail|icloud|rediffmail|zoho)\./;
+  if (!domain || generic.test(domain)) return "";
+
+  const label = domain.split(".")[0];
+  if (!label || label.length < 2 || /^(mail|jobs|careers|hr|info|apply|contact|recruit)$/.test(label)) {
+    return "";
+  }
+  return label.replace(/[-_]/g, " ").replace(/\b[a-z]/g, (c) => c.toUpperCase());
+}

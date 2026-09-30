@@ -1,9 +1,12 @@
+import type { Lead, ServicesProfile } from "../services";
 import {
   OUTREACH_SYSTEM_PROMPT,
+  PITCH_SYSTEM_PROMPT,
   REVISE_SYSTEM_PROMPT,
   WRITE_SYSTEM_PROMPT,
   WrittenSchema,
   buildOutreachText,
+  buildPitchText,
   buildReviseText,
   buildWriteText,
   type Facts,
@@ -147,6 +150,11 @@ export function writeWithCerebras(profile: Profile, facts: Facts): Promise<Writt
 
 export function outreachWithCerebras(profile: Profile, target: OutreachTarget): Promise<Written> {
   return complete(`${OUTREACH_SYSTEM_PROMPT}\n\n${JSON_SHAPE}`, buildOutreachText(profile, target));
+}
+
+/** A freelance service pitch. Same plumbing, a very different email. */
+export function pitchWithCerebras(services: ServicesProfile, lead: Lead): Promise<Written> {
+  return complete(`${PITCH_SYSTEM_PROMPT}\n\n${JSON_SHAPE}`, buildPitchText(services, lead));
 }
 
 export function reviseWithCerebras(
