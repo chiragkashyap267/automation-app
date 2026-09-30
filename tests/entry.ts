@@ -20,3 +20,4 @@ export { editRatio, recordSend, isSettled, describeFamily, deleteRecipe } from "
 export { profileFingerprint } from "../lib/recipes";
 export { recipeProblems } from "../lib/validate";
 export { checkExperience, statedYearsIn } from "../lib/experience";
+export { findPriorApplication, describePriorApplication } from "../lib/priorApplication";

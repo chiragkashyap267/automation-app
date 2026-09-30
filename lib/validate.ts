@@ -1,5 +1,8 @@
 import { cleanRecipient, isGenericMailbox } from "./email";
-import { priorApplication } from "./history";
+import {
+  describePriorApplication,
+  type PriorApplication,
+} from "./priorApplication";
 import { checkExperience } from "./experience";
 import type { Draft, Profile } from "./types";
 
@@ -146,6 +149,32 @@ const TECH_CASING: Record<string, string> = {
 const PLACEHOLDER = /\[(?:your|company|role|name|position|title|insert|add|x{2,})[^\]]*\]|\bTODO\b|\bTBD\b|\bXXX\b/i;
 const UNRENDERED_SLOT = /\{\{\s*\w+\s*\}\}/;
 const URL_IN_TEXT = /\bhttps?:\/\/[^\s<>()]+|\bwww\.[^\s<>()]+/gi;
+
+/**
+ * Bare domains, which the model writes often because the profile stores
+ * links that way — "chiragkashyapwebdev.vercel.app", no scheme.
+ *
+ * The deny list is what stops "Node.js" and "README.md" being read as
+ * websites. A missed link is a warning nobody sees; a false one blocks a
+ * send, so this errs towards missing.
+ */
+const BARE_DOMAIN = /\b(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.){1,3}[a-z]{2,24}\b/gi;
+
+const NOT_A_DOMAIN = new Set([
+  "js", "ts", "jsx", "tsx", "mjs", "cjs", "py", "rb", "go", "rs", "java",
+  "md", "txt", "pdf", "doc", "docx", "json", "yml", "yaml", "html", "css",
+  "scss", "sh", "exe", "sql", "xml", "csv", "png", "jpg", "svg", "env",
+]);
+
+function bareDomainsIn(text: string): string[] {
+  // Anything already carrying a scheme is handled by URL_IN_TEXT.
+  const stripped = text.replace(/\bhttps?:\/\/\S+/gi, " ").replace(/\S+@\S+/g, " ");
+
+  return (stripped.match(BARE_DOMAIN) ?? []).filter((candidate) => {
+    const tld = candidate.split(".").pop()?.toLowerCase() ?? "";
+    return !NOT_A_DOMAIN.has(tld);
+  });
+}
 const SALUTATION = /^\s*(dear|hi|hello|greetings)\b/i;
 
 function hostOf(value: string): string {
@@ -234,7 +263,22 @@ export function unsupportedClaims(draft: Draft, profile: Profile): string[] {
   return unsupportedClaimsIn(draft.body, profile);
 }
 
-export function validateDraft(draft: Draft, profile: Profile): Issue[] {
+/** The parts of a draft these checks actually look at. */
+export type Checkable = Pick<
+  Draft,
+  "subject" | "body" | "recipients" | "company" | "contactName"
+> & { status?: Draft["status"] };
+
+/**
+ * `prior` is passed in rather than looked up, because the two surfaces store
+ * their history in different places: the browser in localStorage, the bot in
+ * the server-side outbox. Passing undefined skips the check.
+ */
+export function validateDraft(
+  draft: Checkable,
+  profile: Profile,
+  prior: PriorApplication | null = null,
+): Issue[] {
   const issues: Issue[] = [];
   const body = draft.body;
   const push = (i: Issue) => issues.push(i);
@@ -271,7 +315,8 @@ export function validateDraft(draft: Draft, profile: Profile): Issue[] {
 
   // A link the candidate does not own is almost always invented.
   const mine = ownHosts(profile);
-  for (const url of body.match(URL_IN_TEXT) ?? []) {
+  const written = [...(body.match(URL_IN_TEXT) ?? []), ...bareDomainsIn(body)];
+  for (const url of new Set(written)) {
     const host = hostOf(url);
     if (host && !mine.has(host)) {
       push({
@@ -284,16 +329,8 @@ export function validateDraft(draft: Draft, profile: Profile): Issue[] {
 
   /* ── advisory ── */
 
-  const already = priorApplication(draft.company, draft.recipients);
-  if (already && draft.status !== "sent") {
-    push({
-      id: "already-applied",
-      severity: "warning",
-      message:
-        `You wrote to ${already.company} ${already.daysAgo === 0 ? "today" : `${already.daysAgo} day${already.daysAgo === 1 ? "" : "s"} ago`}` +
-        `${already.role ? ` about ${already.role}` : ""}` +
-        `${already.reply === "replied" ? " and they replied" : ""}. Sending again may read as spam.`,
-    });
+  if (prior && draft.status !== "sent") {
+    push({ id: "already-applied", severity: "warning", message: describePriorApplication(prior) });
   }
 
   // Editing the years field alone changes nothing, because the prompt makes
@@ -303,7 +340,7 @@ export function validateDraft(draft: Draft, profile: Profile): Issue[] {
     issues.push({ id: "experience-mismatch", severity: "warning", message: experience.message });
   }
 
-  const invented = unsupportedClaims(draft, profile);
+  const invented = unsupportedClaimsIn(draft.body, profile);
   if (invented.length) {
     push({
       id: "unsupported-claim",

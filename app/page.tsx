@@ -11,6 +11,7 @@ import { learnFromSend, newId, processGroup, rewriteDraft, type RunMode } from "
 import { recordSent } from "@/lib/history";
 import { editRatio, loadRecipes } from "@/lib/recipes";
 import { composeEmail } from "@/lib/signature";
+import { priorApplication } from "@/lib/history";
 import { validateDraft } from "@/lib/validate";
 import { authHeaders } from "@/lib/appPassword";
 import {
@@ -536,7 +537,7 @@ export default function HomePage() {
                 key={draft.id}
                 draft={draft}
                 profile={profile}
-                issues={validateDraft(draft, profile)}
+                issues={validateDraft(draft, profile, priorApplication(draft.company, draft.recipients))}
                 onChange={(patch) => updateDraft(draft.id, patch)}
                 onSend={() => void sendDraft(draft)}
                 onRewrite={() => void rewrite(draft)}

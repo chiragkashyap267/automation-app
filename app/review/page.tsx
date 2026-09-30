@@ -8,6 +8,7 @@ import { learnFromSend } from "@/lib/pipeline";
 import { editRatio } from "@/lib/recipes";
 import { authHeaders } from "@/lib/appPassword";
 import { canSend, loadDrafts, missingSendLabel, saveDrafts, useProfile } from "@/lib/store";
+import { priorApplication } from "@/lib/history";
 import { applyFixes, countBySeverity, validateDraft, type Issue } from "@/lib/validate";
 import type { Draft } from "@/lib/types";
 
@@ -34,7 +35,12 @@ export default function ReviewPage() {
   const issuesByDraft = useMemo(() => {
     const map = new Map<string, Issue[]>();
     for (const draft of drafts) {
-      if (draft.status !== "sent") map.set(draft.id, validateDraft(draft, profile));
+      if (draft.status !== "sent") {
+        map.set(
+          draft.id,
+          validateDraft(draft, profile, priorApplication(draft.company, draft.recipients)),
+        );
+      }
     }
     return map;
   }, [drafts, profile]);

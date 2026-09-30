@@ -48,6 +48,8 @@ const {
   recipeProblems,
   checkExperience,
   statedYearsIn,
+  findPriorApplication,
+  describePriorApplication,
 } = await import("./.bundle.mjs");
 
 let pass = 0;
@@ -733,6 +735,72 @@ section("a rendered recipe is checked before it is trusted");
     recipeProblems("At Freelance I ran Selenium regression suites.", "Application", profile).length,
     1,
   );
+}
+
+section("writing to the same people twice");
+{
+  const DAY = 86400000;
+  const now = Date.UTC(2026, 9, 10);
+  const rows = [
+    { company: "Kulsys", role: "QA Engineer", to: ["hr@kulsys.com"], sentAt: now - 4 * DAY, reply: "awaiting" },
+    { company: "Acme", role: "Backend", to: ["jobs@acme.com"], sentAt: now - 40 * DAY, reply: "replied" },
+  ];
+
+  check("the same company is caught", findPriorApplication(rows, "Kulsys", ["other@kulsys.com"], now)?.daysAgo, 4);
+  // The company name is often misread, so the address has to count too.
+  check("the same address is caught", findPriorApplication(rows, "Totally Different Ltd", ["hr@kulsys.com"], now)?.company, "Kulsys");
+  check("case and spacing do not matter", findPriorApplication(rows, "  kulsys ", [], now)?.company, "Kulsys");
+  check("a stranger is not caught", findPriorApplication(rows, "Globex", ["x@globex.com"], now), null);
+  // Beyond three weeks it is a fresh application, not a duplicate.
+  check("an old one has expired", findPriorApplication(rows, "Acme", ["jobs@acme.com"], now), null);
+  check("an empty history is fine", findPriorApplication([], "Acme", ["a@b.com"], now), null);
+
+  const said = describePriorApplication({ company: "Kulsys", role: "QA Engineer", daysAgo: 1, reply: "replied" });
+  check("it reads naturally", said, "You wrote to Kulsys 1 day ago about QA Engineer and they replied. Sending again may read as spam.");
+  check("today is said as today", describePriorApplication({ company: "X", role: "", daysAgo: 0, reply: "awaiting" }).includes("today"), true);
+}
+
+section("the bot's own validation");
+{
+  // These ran only in the browser before, so the bot sent misspellings and
+  // foreign links straight out.
+  const profile = {
+    fullName: "Chirag Kashyap", portfolio: "chiragkashyapwebdev.vercel.app",
+    linkedin: "linkedin.com/in/chiragkashyap267", github: "github.com/chiragkashyap267",
+    email: "me@gmail.com", resumeText: "Built React and Node products at Freelance.",
+    skills: "React, Node", headline: "Developer", extraNotes: "", yearsExperience: "",
+  };
+  const draft = {
+    subject: "Application for Backend Engineer",
+    body: "Dear Hiring Team,\n\nI would like to apply to Acme. I recieve your posting and build React and Node products.",
+    recipients: ["jobs@acme.com"], company: "Acme", contactName: "",
+  };
+
+  const issues = validateDraft(draft, profile, null);
+  check("a misspelling is caught", issues.some((i) => i.id === "spelling:recieve"), true);
+  check("and it carries a repair", Boolean(issues.find((i) => i.id === "spelling:recieve")?.fix), true);
+  check("applying it fixes the text", applyFixes(draft.body, issues).includes("receive"), true);
+
+  const linkErrors = (body) =>
+    validateDraft({ ...draft, body }, profile, null).filter((i) => i.id.startsWith("foreign-link"));
+
+  check("a link with a scheme is checked", linkErrors(draft.body + " See https://portfolio.example.com").length, 1);
+  // The profile stores links bare, so the model writes them bare too — these
+  // used to slip through entirely.
+  check("a bare domain is checked as well", linkErrors(draft.body + " See portfolio.example.com").length, 1);
+  check("and it blocks the send", linkErrors(draft.body + " See portfolio.example.com")[0].severity, "error");
+  check("your own links are fine", linkErrors(draft.body + " chiragkashyapwebdev.vercel.app").length, 0);
+  check("your linkedin is fine", linkErrors(draft.body + " linkedin.com/in/chiragkashyap267").length, 0);
+  // The deny list is what stops a library name being read as a website.
+  check("Node.js is not a website", linkErrors(draft.body + " I use Node.js and Express.js daily.").length, 0);
+  check("a filename is not a website", linkErrors(draft.body + " See README.md for details.").length, 0);
+  check("an email address is not a website", linkErrors(draft.body + " Reach me at me@gmail.com.").length, 0);
+
+  // The prior-application warning is injected now, so both halves can use it.
+  const withPrior = validateDraft(draft, profile, { company: "Acme", role: "Backend", daysAgo: 3, reply: "awaiting" });
+  check("a repeat application warns", withPrior.some((i) => i.id === "already-applied"), true);
+  check("and it is only a warning", withPrior.find((i) => i.id === "already-applied")?.severity, "warning");
+  check("no prior means no warning", validateDraft(draft, profile, null).some((i) => i.id === "already-applied"), false);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

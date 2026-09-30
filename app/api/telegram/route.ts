@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { allowed, botToken, fileUrl, say, tg } from "@/lib/telegramApi";
-import { providerStatus, readJobs, reviseIfNeeded, writeOutreach } from "@/lib/llm";
-import { buildTaskText, companyFromEmail } from "@/lib/llm/prompt";
+import { providerStatus, readJobs, reviseIfNeeded, writeEmail, writeOutreach } from "@/lib/llm";
+import { buildTaskText, companyFromEmail, type Facts } from "@/lib/llm/prompt";
 import { explainSmtpError, preflight, sendMail } from "@/lib/mailer";
 import { loadBotProfile, sharedProfileExists } from "@/lib/sharedProfile";
 import { checkExperience } from "@/lib/experience";
@@ -21,10 +21,13 @@ import { scanForPostings } from "@/lib/inboxJobs";
 import { replySubject } from "@/lib/followup";
 import { fetchResume, resumeFilename } from "@/lib/resumeFetch";
 import { resumeVariants } from "@/lib/resume";
-import { unsupportedClaimsIn } from "@/lib/validate";
+import { applyFixes, recipeProblems, validateDraft, type Issue } from "@/lib/validate";
+import { findRecipe, profileFingerprint, renderRecipe, type Recipe } from "@/lib/recipeCore";
+import { loadSharedRecipes } from "@/lib/sharedRecipes";
+import { findPriorApplication, type PastSend } from "@/lib/priorApplication";
 import { describeCandidates } from "@/lib/followup";
 import { findQuiet, sendFollowUps } from "@/lib/followupRun";
-import { loadOutbox, loadState, recordOutbound } from "@/lib/outbox";
+import { loadOutbox, loadState, outboxAvailable, recordOutbound } from "@/lib/outbox";
 import {
   clearQueue,
   describeWindow,
@@ -217,6 +220,7 @@ async function handleStatus(chatId: number) {
       `  waiting in this batch: ${batch?.drafts.length ?? 0}`,
       `  sent today: ${today}`,
       `  logged for follow-up: ${outbox.length}`,
+      `  saved recipes: ${(await loadSharedRecipes()).length}`,
       `  already nudged: ${nudged}`,
       `  profile: ${(await sharedProfileExists()) ? "shared from the app" : "built-in seed"}`,
     );
@@ -269,6 +273,9 @@ async function handleInbox(chatId: number) {
   await say(chatId, "Reading the last week of mail…");
 
   // Never treat a thread we started as somebody else's posting.
+  const recipes = await loadSharedRecipes();
+  const fingerprint = profileFingerprint(me);
+
   const known = new Set(
     (await loadOutbox())
       .map((e) => e.messageId.replace(/^<|>$/g, "").toLowerCase())
@@ -301,6 +308,8 @@ async function handleInbox(chatId: number) {
     `📬 ${found.candidates.length} of ${found.scanned} look like postings. Writing replies…`,
   );
 
+  const past = await pastSends();
+
   for (const candidate of found.candidates) {
     await tg("sendChatAction", { chat_id: chatId, action: "typing" });
 
@@ -308,7 +317,7 @@ async function handleInbox(chatId: number) {
     try {
       const { result } = await readJobs(
         { text: buildTaskText(me, [candidate.text]), images: [] },
-        "full",
+        readModeFor(recipes),
       );
       job = result.jobs[0];
     } catch (err) {
@@ -322,8 +331,8 @@ async function handleInbox(chatId: number) {
     const { addresses } = cleanRecipients([candidate.from]);
     if (!addresses.length) continue;
 
-    const { written } = await reviseIfNeeded(
-      me,
+    const written = await composeFor(
+      job,
       {
         company: job.company,
         role: job.role,
@@ -336,24 +345,41 @@ async function handleInbox(chatId: number) {
         confidence: job.confidence,
         notes: job.notes,
       },
-      { subject: job.subject ?? "", body: job.body ?? "" },
+      me,
+      recipes,
+      fingerprint,
     );
 
-    const body = composeEmail(normalizePlainText(written.body), me);
     const subject = replySubject(candidate.subject || normalizePlainText(written.subject));
+    const checked = vet(
+      {
+        subject,
+        body: composeEmail(normalizePlainText(written.body), me),
+        recipients: addresses,
+        company: job.company,
+        contactName: job.contactName || candidate.fromName,
+      },
+      me,
+      past,
+    );
+    const body = checked.body;
     const draft = renderDraft(job.company, job.role, addresses, subject, body, candidate.messageId);
 
-    const invented = unsupportedClaimsIn(body, me);
-    if (invented.length) {
+    if (checked.errors.length) {
       await say(
         chatId,
-        `${draft}${NL}${NL}⛔ Not sending this one — it claims "${invented.join('", "')}" ` +
-          `at a named employer and your resume does not say that.`,
+        `${draft}${NL}${NL}⛔ Not sending this one:${NL}` +
+          checked.errors.map((e) => `• ${e.message}`).join(NL),
       );
       continue;
     }
 
-    await say(chatId, `${draft}${NL}${NL}↩️ Goes back inside their own thread.`, {
+    const notes = checked.warnings.map((w) => `⚠️ ${w.message}`).join(NL);
+
+    await say(
+      chatId,
+      `${draft}${NL}${NL}↩️ Goes back inside their own thread.${notes ? `${NL}${NL}${notes}` : ""}`,
+      {
       reply_markup: {
         inline_keyboard: [
           [{ text: "✉️ Send it now", callback_data: "send" }],
@@ -378,6 +404,96 @@ async function handleInbox(chatId: number) {
   }
 
   await refreshSummary(chatId);
+}
+
+/**
+ * Runs the same checks the web app runs, and fixes what can be fixed.
+ *
+ * The bot only ever ran the invented-experience rule, so misspellings, a
+ * mistyped portfolio link and writing to the same company twice all went
+ * straight out. There is no edit box in a chat window, so anything with an
+ * unambiguous repair — a known misspelling, a greeting that should use the
+ * name the posting gave — is applied here rather than reported.
+ */
+function vet(
+  draft: { subject: string; body: string; recipients: string[]; company: string; contactName: string },
+  me: Profile,
+  past: PastSend[],
+): { body: string; errors: Issue[]; warnings: Issue[] } {
+  const prior = findPriorApplication(past, draft.company, draft.recipients);
+  const check = (body: string) => validateDraft({ ...draft, body }, me, prior);
+
+  let body = draft.body;
+  let issues = check(body);
+
+  const fixable = issues.filter((i) => i.fix);
+  if (fixable.length) {
+    body = applyFixes(body, fixable);
+    issues = check(body);
+  }
+
+  return {
+    body,
+    errors: issues.filter((i) => i.severity === "error"),
+    warnings: issues.filter((i) => i.severity === "warning"),
+  };
+}
+
+/** Everything already sent, for the "you wrote to them last week" check. */
+async function pastSends(): Promise<PastSend[]> {
+  if (!outboxAvailable()) return [];
+  const [entries, state] = await Promise.all([loadOutbox(), loadState()]);
+  return entries.map((e) => ({
+    company: e.company,
+    role: e.role,
+    to: e.to,
+    sentAt: e.sentAt,
+    reply: state[e.id]?.repliedAt ? "replied" : "awaiting",
+  }));
+}
+
+type Composed = { subject: string; body: string; fromRecipe: boolean };
+
+/**
+ * The email for one posting, as cheaply as it can honestly be produced.
+ *
+ * A one-shot read has already written it, in which case it only needs
+ * checking. Otherwise a recipe learned in the web app can render it here for
+ * nothing, and the model is paid for only when no recipe fits or the one
+ * that does no longer matches the profile.
+ */
+async function composeFor(
+  job: { subject?: string; body?: string },
+  facts: Facts,
+  me: Profile,
+  recipes: Recipe[],
+  fingerprint: string,
+): Promise<Composed> {
+  if (job.subject && job.body) {
+    const { written } = await reviseIfNeeded(me, facts, { subject: job.subject, body: job.body });
+    return { subject: written.subject, body: written.body, fromRecipe: false };
+  }
+
+  const recipe = findRecipe(recipes, facts, fingerprint);
+  if (recipe) {
+    const rendered = renderRecipe(recipe, facts);
+    const problems = recipeProblems(rendered.body, rendered.subject, me);
+    if (!problems.length) {
+      return { subject: rendered.subject, body: rendered.body, fromRecipe: true };
+    }
+    console.warn(`[recipe] ${recipe.key} rejected: ${problems.join("; ")}`);
+  }
+
+  const { written } = await writeEmail(me, facts);
+  return { subject: written.subject, body: written.body, fromRecipe: false };
+}
+
+/**
+ * Extracting facts is cheaper than extracting and writing in one call, but
+ * only worth it when a recipe is likely to cover the writing.
+ */
+function readModeFor(recipes: Recipe[]): "extract" | "full" {
+  return recipes.length ? "extract" : "full";
 }
 
 /** The reply doubles as the store, so its shape has to be parseable. */
@@ -568,9 +684,15 @@ async function handleMessage(message: TgMessage) {
   await tg("sendChatAction", { chat_id: chatId, action: "typing" });
 
   const me = await profile();
+  const recipes = await loadSharedRecipes();
+  const fingerprint = profileFingerprint(me);
+
   let jobs;
   try {
-    const { result } = await readJobs({ text: buildTaskText(me, texts), images }, "full");
+    const { result } = await readJobs(
+      { text: buildTaskText(me, texts), images },
+      readModeFor(recipes),
+    );
     jobs = result.jobs;
   } catch (err) {
     await say(chatId, `⚠️ ${err instanceof Error ? err.message : "Could not read that."}`);
@@ -592,14 +714,13 @@ async function handleMessage(message: TgMessage) {
     );
   }
 
+  const past = await pastSends();
+
   for (const job of jobs) {
     const { addresses, suspicious } = cleanRecipients(job.recipients ?? []);
 
-    // A one-shot read writes the email in the same call it extracts the
-    // facts, which skipped the quality check the web app runs. Checking is
-    // free; a second model call happens only if something is actually wrong.
-    const { written } = await reviseIfNeeded(
-      me,
+    const written = await composeFor(
+      job,
       {
         company: job.company,
         role: job.role,
@@ -612,21 +733,33 @@ async function handleMessage(message: TgMessage) {
         confidence: job.confidence,
         notes: job.notes,
       },
-      { subject: job.subject ?? "", body: job.body ?? "" },
+      me,
+      recipes,
+      fingerprint,
     );
 
-    const body = composeEmail(normalizePlainText(written.body), me);
     const subject = normalizePlainText(written.subject);
+    const checked = vet(
+      {
+        subject,
+        body: composeEmail(normalizePlainText(written.body), me),
+        recipients: addresses,
+        company: job.company,
+        contactName: job.contactName ?? "",
+      },
+      me,
+      past,
+    );
+    const body = checked.body;
     const draft = renderDraft(job.company, job.role, addresses, subject, body);
 
-    // Experience the resume does not support is the one thing worth refusing
-    // over: it is a claim about the sender, and it cannot be edited here.
-    const invented = unsupportedClaimsIn(body, me);
-    if (invented.length) {
+    // An error is something that cannot be repaired from a chat window, so
+    // the draft is shown without a Send button rather than quietly going out.
+    if (checked.errors.length) {
       await say(
         chatId,
-        `${draft}${NL}${NL}⛔ Not sending this one. It claims "${invented.join('", "')}" at a named ` +
-          `employer and your resume does not say that. Open the app to fix it, or send the posting again.`,
+        `${draft}${NL}${NL}⛔ Not sending this one:${NL}` +
+          checked.errors.map((e) => `• ${e.message}`).join(NL),
       );
       continue;
     }
@@ -639,11 +772,17 @@ async function handleMessage(message: TgMessage) {
       continue;
     }
 
-    const warning = suspicious.length
-      ? `
-
-⚠️ Check ${suspicious.join(", ")} against the posting — a leading icon is often misread into the address.`
-      : "";
+    const notes = [
+      ...(written.fromRecipe ? ["♻️ Written from a saved recipe — no API call."] : []),
+      ...checked.warnings.map((w) => `⚠️ ${w.message}`),
+      ...(suspicious.length
+        ? [
+            `⚠️ Check ${suspicious.join(", ")} against the posting — a leading icon is ` +
+              `often misread into the address.`,
+          ]
+        : []),
+    ];
+    const warning = notes.length ? `${NL}${NL}${notes.join(NL)}` : "";
 
     await say(chatId, draft + warning, {
       reply_markup: {

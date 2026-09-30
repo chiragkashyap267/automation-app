@@ -1,5 +1,9 @@
 "use client";
 
+import {
+  findPriorApplication,
+  type PriorApplication,
+} from "./priorApplication";
 import type { Draft } from "./types";
 
 /**
@@ -171,44 +175,9 @@ export function recentBounceRate(): { bounced: number; sent: number; high: boole
   return { bounced, sent: recent.length, high: recent.length >= 10 && bounced / recent.length > 0.2 };
 }
 
-/**
- * Applications to the same company inside this window are almost always a
- * mistake — the same posting screenshotted twice, or forgotten about.
- */
-const REAPPLY_DAYS = 21;
-
-export type PriorApplication = {
-  company: string;
-  role: string;
-  daysAgo: number;
-  reply: ReplyState;
-};
-
-/** Have we already written to this company, or this exact address, recently? */
-export function priorApplication(
-  company: string,
-  recipients: string[],
-): PriorApplication | null {
-  const normalised = company.trim().toLowerCase();
-  const addresses = new Set(recipients.map((r) => r.toLowerCase()));
-  const cutoff = Date.now() - REAPPLY_DAYS * 24 * 60 * 60 * 1000;
-
-  for (const row of loadHistory()) {
-    if (row.sentAt < cutoff) continue;
-
-    const sameCompany = Boolean(normalised) && row.company.trim().toLowerCase() === normalised;
-    const sameAddress = row.to.some((t) => addresses.has(t.toLowerCase()));
-    if (!sameCompany && !sameAddress) continue;
-
-    return {
-      company: row.company || row.to[0] || "them",
-      role: row.role,
-      daysAgo: Math.max(0, Math.round((Date.now() - row.sentAt) / 86_400_000)),
-      reply: row.reply,
-    };
-  }
-
-  return null;
+/** The browser's own view of it, over the localStorage history. */
+export function priorApplication(company: string, recipients: string[]): PriorApplication | null {
+  return findPriorApplication(loadHistory(), company, recipients);
 }
 
 export function clearHistory() {
@@ -362,3 +331,5 @@ export function countFollowedUp(
 ): number {
   return Object.values(state).filter((s) => s.followedUpAt).length;
 }
+
+export type { PriorApplication };
