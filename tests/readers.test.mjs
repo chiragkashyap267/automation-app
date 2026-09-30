@@ -4,9 +4,8 @@ for (let i = 1; i <= 2; i++) process.env[`GEMINI_API_KEY_${i}`] = `gem-${i}`;
 process.env.GROQ_API_KEY_1 = "groq-1";
 delete process.env.ANTHROPIC_API_KEY;
 
-const { textReaders, visionReaders, readJobs, geminiPool, groqPool } = await import(
-  "./.readers.bundle.mjs"
-);
+const { textReaders, visionReaders, readJobs, reviseIfNeeded, geminiPool, groqPool } =
+  await import("./.readers.bundle.mjs");
 
 let pass = 0, fail = 0;
 const check = (label, actual, expected) => {
@@ -65,6 +64,58 @@ globalThis.fetch = async (url) =>
 const imgErr = await readJobs({ text: "x", images: [{ mediaType: "image/png", data: "AAA" }] }, "full")
   .then(() => null, (e) => e.message);
 check("a screenshot never falls back to a blind reader", /Gemini key/i.test(imgErr || ""), true);
+
+console.log("");
+console.log("-- the one-shot draft is checked too");
+{
+  // The bot reads and writes in a single call to save quota, which used to
+  // mean its drafts skipped the check that catches invented experience.
+  const profile = {
+    fullName: "Chirag Kashyap",
+    resumeText: "Built React dashboards and REST APIs at Freelance. Next.js, TypeScript, Node.",
+    skills: "React, Next.js, TypeScript, Node",
+    portfolio: "",
+    linkedin: "",
+    github: "",
+    signOff: "Best regards",
+  };
+
+  let calls = 0;
+  const watched = globalThis.fetch;
+  globalThis.fetch = async (...a) => { calls += 1; return watched(...a); };
+
+  const clean = {
+    subject: "Application for Frontend Engineer",
+    body: "Hello, I am applying for the Frontend Engineer role. I build React and Next.js interfaces in TypeScript, and have shipped REST APIs in Node. I would welcome the chance to talk about how that fits what you need from this position, and can share work on request.",
+  };
+  const ok = await reviseIfNeeded(profile, { company: "Acme", role: "Frontend Engineer" }, clean);
+  check("a clean draft raises nothing", ok.problems, []);
+  check("and is returned unchanged", ok.written.subject, clean.subject);
+  // The whole point of checking locally is that it costs nothing.
+  check("no model call is made for a clean draft", calls, 0);
+
+  // The real failure this app produced: a duty invented and pinned on an
+  // employer that IS in the resume. Long enough that the word-count rule
+  // stays quiet and only the claim is reported.
+  const invented = {
+    subject: "Application for QA Engineer",
+    body:
+      "Hello, I am writing about the QA Engineer role you advertised. At Freelance I wrote " +
+      "automated Selenium suites and owned the regression pipeline for three years, running " +
+      "manual testing across releases and tracking every defect through to closure. That " +
+      "background lines up closely with what this position appears to need day to day, and I " +
+      "would be glad to walk through any of it with you at whatever length suits.",
+  };
+  const bad = await reviseIfNeeded(profile, { company: "Acme", role: "QA Engineer" }, invented);
+  check("invented experience is caught", bad.problems.length > 0, true);
+  check("the invented duty is named", /selenium|regression|manual testing/i.test(bad.problems.join(" ")), true);
+  check("the length rule stays quiet", /words/.test(bad.problems.join(" ")), false);
+  // With no keys configured there is nothing to revise with, and that must
+  // return the draft plus its problems rather than throwing.
+  check("no writer available still returns", bad.revised, false);
+
+  globalThis.fetch = watched;
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

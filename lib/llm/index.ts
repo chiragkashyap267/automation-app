@@ -266,3 +266,36 @@ export async function writeEmail(
 
   throw firstError instanceof Error ? firstError : new Error("Could not write this email.");
 }
+
+/**
+ * Applies the write-path's quality check to an email that arrived from a
+ * one-shot read.
+ *
+ * The bot reads and writes in a single call to save quota, which meant its
+ * drafts skipped the check that catches a model inventing experience — the
+ * exact failure this app has already produced once. The check itself is
+ * local and free; a second call is made only when something is wrong, and
+ * only kept when it is actually an improvement.
+ */
+export async function reviseIfNeeded(
+  profile: Profile,
+  facts: Facts,
+  written: Written,
+): Promise<{ written: Written; problems: string[]; revised: boolean }> {
+  const problems = problemsWith(written, profile);
+  if (!problems.length) return { written, problems: [], revised: false };
+
+  console.warn(`[read] one-shot draft has ${problems.length} problem(s), revising`);
+
+  for (const writer of writers()) {
+    try {
+      const fixed = await reviseWith(writer, profile, facts, written, problems);
+      const left = problemsWith(fixed, profile);
+      if (left.length < problems.length) return { written: fixed, problems: left, revised: true };
+    } catch (err) {
+      console.error(`[read] revision via ${writer} failed`, err instanceof Error ? err.message : err);
+    }
+  }
+
+  return { written, problems, revised: false };
+}

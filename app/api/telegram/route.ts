@@ -1,22 +1,24 @@
 import { NextResponse } from "next/server";
 import { allowed, botToken, fileUrl, say, tg } from "@/lib/telegramApi";
-import { readJobs, writeOutreach } from "@/lib/llm";
+import { providerStatus, readJobs, reviseIfNeeded, writeOutreach } from "@/lib/llm";
 import { buildTaskText, companyFromEmail } from "@/lib/llm/prompt";
 import { explainSmtpError, preflight, sendMail } from "@/lib/mailer";
-import { loadBotProfile } from "@/lib/sharedProfile";
+import { loadBotProfile, sharedProfileAvailable } from "@/lib/sharedProfile";
 import {
   addToBatch,
   batchingAvailable,
   clearBatch,
   isLastOfBurst,
   loadBatch,
+  sendsToday,
   setSummaryMessage,
 } from "@/lib/batch";
 import { sendAllInBatch } from "./sendAll";
 import { cleanRecipients } from "@/lib/email";
+import { unsupportedClaimsIn } from "@/lib/validate";
 import { describeCandidates } from "@/lib/followup";
 import { findQuiet, sendFollowUps } from "@/lib/followupRun";
-import { recordOutbound } from "@/lib/outbox";
+import { loadOutbox, loadState, recordOutbound } from "@/lib/outbox";
 import { composeEmail, normalizePlainText } from "@/lib/signature";
 import { EMPTY_PROFILE, type Profile } from "@/lib/types";
 
@@ -208,6 +210,59 @@ async function handleFollowUps(
   );
 }
 
+/**
+ * What is actually configured, read from the running server.
+ *
+ * Most of this app's confusion is environment variables: which one, set
+ * where, and whether the deployment has picked them up yet. Asking the server
+ * itself beats guessing from a dashboard.
+ */
+async function handleStatus(chatId: number) {
+  const providers = providerStatus();
+  const me = await profile();
+
+  const pool = (name: string, p: { total: number; available: number } | null) =>
+    p ? `${name}: ${p.available}/${p.total} key${p.total === 1 ? "" : "s"} ready` : `${name}: none`;
+
+  const lines = [
+    "READING AND WRITING",
+    `  screenshots → ${providers.visionReader ?? "nothing configured"}`,
+    `  text → ${providers.textReader ?? "nothing configured"}`,
+    `  writing → ${providers.writer ?? "nothing configured"}`,
+    `  ${pool("gemini", providers.gemini)}`,
+    `  ${pool("groq", providers.groq)}`,
+    `  ${pool("cerebras", providers.cerebras)}`,
+    "",
+    "SENDING",
+    `  gmail: ${me.gmailUser || "GMAIL_USER not set"}`,
+    `  password: ${me.gmailAppPassword ? "set" : "GMAIL_APP_PASSWORD not set"}`,
+    `  resume: ${process.env.RESUME_URL?.trim() ? "from RESUME_URL" : "none attached"}`,
+  ];
+
+  if (!batchingAvailable()) {
+    lines.push("", "STORAGE", "  Upstash not configured — no batching, no follow-ups");
+  } else {
+    const [batch, outbox, state, today] = await Promise.all([
+      loadBatch(chatId),
+      loadOutbox(),
+      loadState(),
+      sendsToday(chatId),
+    ]);
+    const nudged = Object.values(state).filter((x) => x.followedUpAt).length;
+    lines.push(
+      "",
+      "STORAGE",
+      `  waiting in this batch: ${batch?.drafts.length ?? 0}`,
+      `  sent today: ${today}`,
+      `  logged for follow-up: ${outbox.length}`,
+      `  already nudged: ${nudged}`,
+      `  profile: ${sharedProfileAvailable() ? "shared from the app" : "built-in seed"}`,
+    );
+  }
+
+  await say(chatId, lines.join(NL));
+}
+
 /** The reply doubles as the store, so its shape has to be parseable. */
 function renderDraft(company: string, role: string, to: string[], subject: string, body: string) {
   const header = [company, role].filter(Boolean).join(" — ") || "Job application";
@@ -251,7 +306,9 @@ const HELP = `Two things I can do.
    Or send a bare email address and I will use your usual title.
    This writes a short "do you have openings?" email instead.
 
-I also check every weekday morning for applications that have gone quiet for a week, and offer to nudge them once. Ask any time with /followups.`;
+I also check every weekday morning for applications that have gone quiet for a week, and offer to nudge them once. Ask any time with /followups.
+
+/status shows what the server actually has configured.`;
 
 const EMAIL_ONLY = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const BARE_URL = /^\s*https?:\/\/\S+\s*$/i;
@@ -304,6 +361,11 @@ async function handleMessage(message: TgMessage) {
   const text = (message.text ?? message.caption ?? "").trim();
   if (/^\/(start|help)\b/.test(text)) {
     await say(chatId, HELP);
+    return;
+  }
+
+  if (/^\/status\b/i.test(text)) {
+    await handleStatus(chatId);
     return;
   }
 
@@ -389,9 +451,42 @@ async function handleMessage(message: TgMessage) {
 
   for (const job of jobs) {
     const { addresses, suspicious } = cleanRecipients(job.recipients ?? []);
-    const body = composeEmail(normalizePlainText(job.body ?? ""), me);
-    const subject = normalizePlainText(job.subject ?? "");
+
+    // A one-shot read writes the email in the same call it extracts the
+    // facts, which skipped the quality check the web app runs. Checking is
+    // free; a second model call happens only if something is actually wrong.
+    const { written } = await reviseIfNeeded(
+      me,
+      {
+        company: job.company,
+        role: job.role,
+        location: job.location,
+        reqId: job.reqId,
+        recipients: addresses,
+        contactName: job.contactName,
+        highlights: job.highlights,
+        seniority: job.seniority,
+        confidence: job.confidence,
+        notes: job.notes,
+      },
+      { subject: job.subject ?? "", body: job.body ?? "" },
+    );
+
+    const body = composeEmail(normalizePlainText(written.body), me);
+    const subject = normalizePlainText(written.subject);
     const draft = renderDraft(job.company, job.role, addresses, subject, body);
+
+    // Experience the resume does not support is the one thing worth refusing
+    // over: it is a claim about the sender, and it cannot be edited here.
+    const invented = unsupportedClaimsIn(body, me);
+    if (invented.length) {
+      await say(
+        chatId,
+        `${draft}${NL}${NL}⛔ Not sending this one. It claims "${invented.join('", "')}" at a named ` +
+          `employer and your resume does not say that. Open the app to fix it, or send the posting again.`,
+      );
+      continue;
+    }
 
     if (!addresses.length) {
       await say(
