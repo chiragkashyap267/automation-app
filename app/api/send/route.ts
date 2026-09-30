@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { explainSmtpError, preflight, sendMail } from "@/lib/mailer";
+import { recordOutbound } from "@/lib/outbox";
 import { EMPTY_PROFILE, type Profile } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -11,6 +12,8 @@ type Body = {
   subject?: string;
   body?: string;
   attachResume?: boolean;
+  /** Enough to follow up on later, from a job with no browser open. */
+  meta?: { id?: string; company?: string; role?: string; contactName?: string };
 };
 
 export async function POST(request: Request) {
@@ -58,6 +61,21 @@ export async function POST(request: Request) {
             }
           : undefined,
     });
+    // Logged server-side so the scheduled follow-up job can see it. A store
+    // failure must never turn a sent email into a reported error.
+    await recordOutbound({
+      id: payload.meta?.id || messageId || `${Date.now()}`,
+      messageId,
+      to,
+      company: payload.meta?.company ?? "",
+      role: payload.meta?.role ?? "",
+      contactName: payload.meta?.contactName ?? "",
+      subject,
+      sentAt: Date.now(),
+      via: "web",
+      chatId: null,
+    }).catch((err) => console.error("[send] outbox", err));
+
     return NextResponse.json({ ok: true, messageId });
   } catch (err) {
     const raw = err instanceof Error ? err.message : String(err);

@@ -7,6 +7,7 @@ import {
   sendsToday,
 } from "@/lib/batch";
 import { explainSmtpError, preflight, sendMail, type MailRequest } from "@/lib/mailer";
+import { recordOutbound } from "@/lib/outbox";
 import type { Profile } from "@/lib/types";
 
 /** A short pause between sends; Gmail treats a burst as a sending pattern. */
@@ -73,7 +74,7 @@ export async function sendAllInBatch(chatId: number, summaryMessageId: number, d
     }
 
     try {
-      await send({
+      const messageId = await send({
         user: profile.gmailUser,
         pass: profile.gmailAppPassword,
         fromName: profile.fullName,
@@ -86,6 +87,21 @@ export async function sendAllInBatch(chatId: number, summaryMessageId: number, d
       });
       sent += 1;
       results.push(`✓ ${label}`);
+
+      // The same log the web app writes to, so a bot send can be followed up
+      // on and shows up in the insights.
+      await recordOutbound({
+        id: messageId || `${chatId}:${Date.now()}:${i}`,
+        messageId,
+        to: draft.to,
+        company: draft.company,
+        role: draft.role,
+        contactName: draft.contactName ?? "",
+        subject: draft.subject,
+        sentAt: Date.now(),
+        via: "bot",
+        chatId,
+      }).catch((err) => console.error("[sendall] outbox", err));
     } catch (err) {
       const raw = err instanceof Error ? err.message : String(err);
       console.error("[sendall]", raw);

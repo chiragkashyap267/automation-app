@@ -10,6 +10,9 @@ export type MailRequest = {
   replyTo?: string;
   subject: string;
   text: string;
+  /** Set both to thread a follow-up onto the original, not start a new one. */
+  inReplyTo?: string;
+  references?: string;
   attachment?: { filename: string; content: Buffer; contentType: string };
 };
 
@@ -63,6 +66,8 @@ export async function sendMail(req: MailRequest): Promise<string> {
       replyTo: req.replyTo,
       subject: req.subject,
       text: req.text,
+      inReplyTo: req.inReplyTo,
+      references: req.references,
       attachments: req.attachment ? [req.attachment] : [],
     });
     return info.messageId;

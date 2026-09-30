@@ -71,3 +71,46 @@ export async function kvIncrement(key: string, ttlSeconds: number): Promise<numb
   if (value === 1) await command(["EXPIRE", key, ttlSeconds]);
   return value;
 }
+
+/**
+ * Appends to a capped list. Used for the outbox, where every send is a new
+ * entry and nothing already written is ever rewritten — so two sends landing
+ * at once cannot lose each other the way a read-modify-write on a JSON blob
+ * would.
+ */
+export async function kvPush(key: string, value: unknown, keepLast: number): Promise<boolean> {
+  const length = await command<number>(["LPUSH", key, JSON.stringify(value)]);
+  if (length === null) return false;
+  if (length > keepLast) await command(["LTRIM", key, 0, keepLast - 1]);
+  return true;
+}
+
+/** Newest first, matching the order kvPush writes in. */
+export async function kvList<T>(key: string, limit: number): Promise<T[]> {
+  const raw = await command<string[]>(["LRANGE", key, 0, limit - 1]);
+  if (!raw) return [];
+
+  const out: T[] = [];
+  for (const entry of raw) {
+    try {
+      out.push(JSON.parse(entry) as T);
+    } catch {
+      /* skip an entry we cannot read rather than losing the whole list */
+    }
+  }
+  return out;
+}
+
+/**
+ * Sets a key only if it does not exist. Returns whether this caller was the
+ * one that set it — the lock that stops the same application being followed
+ * up twice when a cron run overlaps a manual tap.
+ */
+export async function kvClaim(key: string, ttlSeconds: number): Promise<boolean> {
+  const result = await command<string | null>(["SET", key, "1", "NX", "EX", ttlSeconds]);
+  return result === "OK";
+}
+
+export async function kvHas(key: string): Promise<boolean> {
+  return (await command<number>(["EXISTS", key])) === 1;
+}

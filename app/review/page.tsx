@@ -7,7 +7,7 @@ import { checkSendGuard, recordSent } from "@/lib/history";
 import { learnFromSend } from "@/lib/pipeline";
 import { editRatio } from "@/lib/recipes";
 import { authHeaders } from "@/lib/appPassword";
-import { canSend, loadDrafts, saveDrafts, useProfile } from "@/lib/store";
+import { canSend, loadDrafts, missingSendLabel, saveDrafts, useProfile } from "@/lib/store";
 import { applyFixes, countBySeverity, validateDraft, type Issue } from "@/lib/validate";
 import type { Draft } from "@/lib/types";
 
@@ -88,6 +88,12 @@ Send anyway?`)) return;
             subject: draft.subject,
             body: composeEmail(draft.body, profile),
             attachResume: Boolean(profile.resumeFileData),
+            meta: {
+              id: draft.id,
+              company: draft.company,
+              role: draft.role,
+              contactName: draft.contactName,
+            },
           }),
         });
         const payload = (await response.json()) as { error?: string; messageId?: string };
@@ -147,7 +153,7 @@ Send anyway?`)) return;
           className="mb-4 rounded-xl px-3.5 py-2.5 text-[13px]"
           style={{ background: "var(--danger-soft)", color: "var(--danger)" }}
         >
-          Add your Gmail App Password in{" "}
+          Add {missingSendLabel(profile)} in{" "}
           <Link href="/profile" className="font-bold underline">
             Details
           </Link>{" "}

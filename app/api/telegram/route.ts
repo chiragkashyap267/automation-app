@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { allowed, botToken, fileUrl, say, tg } from "@/lib/telegramApi";
 import { readJobs, writeOutreach } from "@/lib/llm";
 import { buildTaskText, companyFromEmail } from "@/lib/llm/prompt";
 import { explainSmtpError, preflight, sendMail } from "@/lib/mailer";
@@ -12,6 +13,9 @@ import {
 } from "@/lib/batch";
 import { sendAllInBatch } from "./sendAll";
 import { cleanRecipients } from "@/lib/email";
+import { describeCandidates } from "@/lib/followup";
+import { findQuiet, sendFollowUps } from "@/lib/followupRun";
+import { recordOutbound } from "@/lib/outbox";
 import { composeEmail, normalizePlainText } from "@/lib/signature";
 import { EMPTY_PROFILE, type Profile } from "@/lib/types";
 
@@ -27,7 +31,6 @@ export const maxDuration = 60;
  * in the callback — so no database, no session, and a cold start loses nothing.
  */
 
-const API = "https://api.telegram.org/bot";
 
 /** Named once so a newline never has to be escaped inline. */
 const NL = String.fromCharCode(10);
@@ -49,34 +52,6 @@ type TgUpdate = {
   callback_query?: { id: string; from: TgUser; data?: string; message?: TgMessage };
 };
 
-function token(): string {
-  const value = process.env.TELEGRAM_BOT_TOKEN;
-  if (!value) throw new Error("TELEGRAM_BOT_TOKEN is not set.");
-  return value;
-}
-
-async function tg(method: string, payload: unknown) {
-  const res = await fetch(`${API}${token()}/${method}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) console.error(`[telegram] ${method} ${res.status}`, (await res.text()).slice(0, 200));
-  return res;
-}
-
-const say = (chat_id: number, text: string, extra: Record<string, unknown> = {}) =>
-  tg("sendMessage", { chat_id, text, disable_web_page_preview: true, ...extra });
-
-/** Only the owner may use the bot — it spends API quota and sends as them. */
-function allowed(chatId: number): boolean {
-  const list = (process.env.TELEGRAM_ALLOWED_CHAT_ID ?? "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
-  return list.length > 0 && list.includes(String(chatId));
-}
-
 async function profile(): Promise<Profile> {
   const base = await loadBotProfile();
   return {
@@ -87,14 +62,14 @@ async function profile(): Promise<Profile> {
 }
 
 async function fetchImage(fileId: string): Promise<{ mediaType: string; data: string } | null> {
-  const info = await fetch(`${API}${token()}/getFile?file_id=${encodeURIComponent(fileId)}`);
+  const info = await fetch(fileUrl(`getFile?file_id=${encodeURIComponent(fileId)}`));
   if (!info.ok) return null;
 
   const meta = (await info.json()) as { ok: boolean; result?: { file_path?: string } };
   const path = meta.result?.file_path;
   if (!path) return null;
 
-  const file = await fetch(`https://api.telegram.org/file/bot${token()}/${path}`);
+  const file = await fetch(`https://api.telegram.org/file/bot${botToken()}/${path}`);
   if (!file.ok) return null;
 
   const buffer = Buffer.from(await file.arrayBuffer());
@@ -186,6 +161,52 @@ async function handleSendAll(
   });
 }
 
+/**
+ * Offers, or sends, a nudge on everything that has gone quiet.
+ *
+ * The list is always recomputed, never taken from the message the offer was
+ * posted in: a reply that arrived since then has to cancel the nudge, and the
+ * only way to know is to look at the inbox again.
+ */
+async function handleFollowUps(
+  chatId: number,
+  send: boolean,
+  answer: (text: string) => Promise<unknown>,
+) {
+  const me = await profile();
+  const { candidates, scanned } = await findQuiet(me);
+
+  if (scanned === null) {
+    await answer("Could not read the inbox, so I cannot tell who already replied.");
+    return;
+  }
+  if (!candidates.length) {
+    await answer("Nothing has gone quiet. Everything is either too recent or answered.");
+    return;
+  }
+
+  if (!send) {
+    await say(chatId, describeCandidates(candidates), {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: `✉️ Nudge all ${candidates.length}`, callback_data: "followup" }],
+          [{ text: "🔕 Not now", callback_data: "followup:skip" }],
+        ],
+      },
+    });
+    return;
+  }
+
+  await answer(`Nudging ${candidates.length}…`);
+  const { sent, outcomes } = await sendFollowUps(candidates, me, { chatId });
+
+  const lines = outcomes.map((o) => `${o.ok ? "✓" : "✕"} ${o.label} — ${o.detail}`);
+  await say(
+    chatId,
+    [`${sent ? "✅" : "⚠️"} Nudged ${sent} of ${candidates.length}`, "", lines.join(NL)].join(NL),
+  );
+}
+
 /** The reply doubles as the store, so its shape has to be parseable. */
 function renderDraft(company: string, role: string, to: string[], subject: string, body: string) {
   const header = [company, role].filter(Boolean).join(" — ") || "Job application";
@@ -202,7 +223,16 @@ function parseDraft(text: string) {
   const blank = text.indexOf("\n\n", afterSubject);
   if (blank === -1) return null;
 
+  // The first line is the header renderDraft wrote: an icon, then
+  // "Company — Role". Without the dash there was no company to write down.
+  const header = text.split("\n")[0].replace(/^\S+\s*/, "").trim();
+  const dash = header.includes(" — ") ? header.split(" — ") : [];
+  const company = (dash[0] ?? "").trim();
+  const role = (dash[1] ?? "").trim();
+
   return {
+    company: company ?? "",
+    role: role ?? "",
     to: to.split(/[,;]\s*/).map((s) => s.trim()).filter(Boolean),
     subject: subject.trim(),
     body: text.slice(blank + 2),
@@ -218,7 +248,9 @@ const HELP = `Two things I can do.
 2. COLD ENQUIRY — no posting, just ask:
    /ask hr@company.com Software Engineer
    Or send a bare email address and I will use your usual title.
-   This writes a short "do you have openings?" email instead.`;
+   This writes a short "do you have openings?" email instead.
+
+I also check every weekday morning for applications that have gone quiet for a week, and offer to nudge them once. Ask any time with /followups.`;
 
 const EMAIL_ONLY = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const BARE_URL = /^\s*https?:\/\/\S+\s*$/i;
@@ -271,6 +303,12 @@ async function handleMessage(message: TgMessage) {
   const text = (message.text ?? message.caption ?? "").trim();
   if (/^\/(start|help)\b/.test(text)) {
     await say(chatId, HELP);
+    return;
+  }
+
+  if (/^\/followups?\b/i.test(text)) {
+    await tg("sendChatAction", { chat_id: chatId, action: "typing" });
+    await handleFollowUps(chatId, false, (t) => say(chatId, t));
     return;
   }
 
@@ -375,7 +413,14 @@ async function handleMessage(message: TgMessage) {
     });
 
     if (batchingAvailable()) {
-      await addToBatch(chatId, { company: job.company, role: job.role, to: addresses, subject, body });
+      await addToBatch(chatId, {
+        company: job.company,
+        role: job.role,
+        contactName: job.contactName ?? "",
+        to: addresses,
+        subject,
+        body,
+      });
     }
   }
 
@@ -452,6 +497,27 @@ async function handleCallback(query: NonNullable<TgUpdate["callback_query"]>) {
     return;
   }
 
+  if (query.data === "followup:skip") {
+    await answer("Left alone");
+    await tg("editMessageText", {
+      chat_id: chatId,
+      message_id: message.message_id,
+      text: "🔕 No nudges sent. I will ask again tomorrow.",
+    });
+    return;
+  }
+
+  if (query.data === "followup") {
+    // Drop the button first, so a double tap cannot start a second run.
+    await tg("editMessageReplyMarkup", {
+      chat_id: chatId,
+      message_id: message.message_id,
+      reply_markup: { inline_keyboard: [] },
+    });
+    await handleFollowUps(chatId, true, answer);
+    return;
+  }
+
   const parsed = parseDraft(message.text ?? "");
   if (!parsed) {
     await answer("Could not read that draft.");
@@ -479,7 +545,7 @@ async function handleCallback(query: NonNullable<TgUpdate["callback_query"]>) {
   }
 
   try {
-    await sendMail({
+    const messageId = await sendMail({
       user: me.gmailUser,
       pass: me.gmailAppPassword,
       fromName: me.fullName,
@@ -490,6 +556,19 @@ async function handleCallback(query: NonNullable<TgUpdate["callback_query"]>) {
       text: parsed.body,
       attachment: resume?.ok ? resume.attachment : undefined,
     });
+
+    await recordOutbound({
+      id: messageId || `${chatId}:${message.message_id}`,
+      messageId,
+      to: parsed.to,
+      company: parsed.company,
+      role: parsed.role,
+      contactName: "",
+      subject: parsed.subject,
+      sentAt: Date.now(),
+      via: "bot",
+      chatId,
+    }).catch((err) => console.error("[telegram] outbox", err));
 
     await answer("Sent");
     // Drop the button so the same draft cannot be sent twice.

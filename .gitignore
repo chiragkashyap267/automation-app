@@ -16,3 +16,4 @@ tests/.dedupe.bundle.mjs
 tests/.batch.bundle.mjs
 tests/.usage.bundle.mjs
 tests/.newfeatures.bundle.mjs
+tests/.followups.bundle.mjs

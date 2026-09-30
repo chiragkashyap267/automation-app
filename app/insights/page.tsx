@@ -13,7 +13,7 @@ import {
 import { describeFamily } from "@/lib/recipes";
 import { KIND_LABEL, type ReplyKind } from "@/lib/replyKind";
 import { authHeaders } from "@/lib/appPassword";
-import { canSend, useProfile } from "@/lib/store";
+import { canSend, missingSendLabel, useProfile } from "@/lib/store";
 
 export default function InsightsPage() {
   const { profile, ready } = useProfile();
@@ -153,7 +153,8 @@ export default function InsightsPage() {
 
           {!sendReady && (
             <p className="mt-2 text-center text-[12.5px]" style={{ color: "var(--danger)" }}>
-              Add your Gmail App Password in Details — the same one reads replies.
+              Add {missingSendLabel(profile)} in Details — the same credentials read replies.
+              They are stored in this browser, not on the server.
             </p>
           )}
           {status && (

@@ -13,7 +13,14 @@ import { editRatio, loadRecipes } from "@/lib/recipes";
 import { composeEmail } from "@/lib/signature";
 import { validateDraft } from "@/lib/validate";
 import { authHeaders } from "@/lib/appPassword";
-import { canSend, loadDrafts, profileIsUsable, saveDrafts, useProfile } from "@/lib/store";
+import {
+  canSend,
+  loadDrafts,
+  missingSendLabel,
+  profileIsUsable,
+  saveDrafts,
+  useProfile,
+} from "@/lib/store";
 import type { Draft, SourceItem } from "@/lib/types";
 
 const CONCURRENCY = 3;
@@ -272,6 +279,12 @@ export default function HomePage() {
             subject: draft.subject,
             body: composeEmail(draft.body, profile),
             attachResume: Boolean(profile.resumeFileData),
+            meta: {
+              id: draft.id,
+              company: draft.company,
+              role: draft.role,
+              contactName: draft.contactName,
+            },
           }),
         });
         const payload = (await response.json()) as { error?: string; messageId?: string };
@@ -417,7 +430,7 @@ export default function HomePage() {
 
       {ready && setupDone && !sendReady && (
         <Banner tone="accent">
-          Emails can be written now. Add your Gmail App Password in{" "}
+          Emails can be written now. Add {missingSendLabel(profile)} in{" "}
           <Link href="/profile" className="font-bold underline">
             Details
           </Link>{" "}

@@ -107,3 +107,32 @@ export function profileIsUsable(p: Profile): boolean {
 export function canSend(p: Profile): boolean {
   return Boolean(p.gmailUser.trim() && p.gmailAppPassword.trim());
 }
+
+/**
+ * Which half of the Gmail setup is missing, named exactly.
+ *
+ * Both halves are needed and they fail identically, so a message that only
+ * ever mentions the password sends people to re-type the one thing that was
+ * already right. These credentials live in this browser and nowhere else —
+ * setting them on the server configures the Telegram bot, not this page.
+ */
+export function missingSendField(p: Profile): "address" | "password" | "both" | null {
+  const hasUser = Boolean(p.gmailUser.trim());
+  const hasPass = Boolean(p.gmailAppPassword.trim());
+  if (hasUser && hasPass) return null;
+  if (!hasUser && !hasPass) return "both";
+  return hasUser ? "password" : "address";
+}
+
+export function missingSendLabel(p: Profile): string {
+  switch (missingSendField(p)) {
+    case "both":
+      return "your Gmail address and App Password";
+    case "address":
+      return "your Gmail address (the App Password is saved)";
+    case "password":
+      return "your Gmail App Password";
+    default:
+      return "";
+  }
+}

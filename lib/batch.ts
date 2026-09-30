@@ -12,6 +12,7 @@ import { kvConfigured, kvDelete, kvGet, kvIncrement, kvSet } from "./kv";
 export type BatchDraft = {
   company: string;
   role: string;
+  contactName?: string;
   to: string[];
   subject: string;
   /** Already composed, signature included — exactly what will be sent. */
