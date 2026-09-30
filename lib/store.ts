@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { authHeaders } from "./appPassword";
 import { SEED_PROFILE } from "./seed";
 import { EMPTY_PROFILE, type Draft, type Profile } from "./types";
 
@@ -55,6 +56,27 @@ export function saveDrafts(drafts: Draft[]) {
   }
 }
 
+let mirrorTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Pushes the profile to the server so the Telegram bot writes from the same
+ * details. Debounced, because this runs on every keystroke in the Details
+ * form. Credentials are stripped server-side before anything is stored.
+ */
+function queueMirror(profile: Profile) {
+  if (typeof window === "undefined") return;
+  if (mirrorTimer) clearTimeout(mirrorTimer);
+
+  mirrorTimer = setTimeout(() => {
+    void fetch("/api/profile", {
+      method: "POST",
+      headers: authHeaders({ "content-type": "application/json" }),
+      body: JSON.stringify({ profile }),
+      // Failing to mirror is not worth interrupting anyone over.
+    }).catch(() => {});
+  }, 2000);
+}
+
 /** Profile state that hydrates from localStorage after mount, to keep SSR stable. */
 export function useProfile() {
   const [profile, setProfile] = useState<Profile>(EMPTY_PROFILE);
@@ -69,6 +91,7 @@ export function useProfile() {
     setProfile((prev) => {
       const next = { ...prev, ...patch };
       saveProfile(next);
+      queueMirror(next);
       return next;
     });
   }, []);

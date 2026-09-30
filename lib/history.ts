@@ -31,6 +31,8 @@ export type SentEmail = {
   replyAt: number;
   replyFrom: string;
   replySubject: string;
+  /** interview / rejection / recruiter / other, from replyKind.ts */
+  replyKind: string;
   lastCheckedAt: number;
 };
 
@@ -77,13 +79,21 @@ export function recordSent(draft: Draft, messageId: string, edited: boolean) {
     replyAt: 0,
     replyFrom: "",
     replySubject: "",
+    replyKind: "",
     lastCheckedAt: 0,
   });
   write(rows);
 }
 
 export function applyReplyResults(
-  results: { id: string; reply: ReplyState; at: number; from: string; subject: string }[],
+  results: {
+    id: string;
+    reply: ReplyState;
+    at: number;
+    from: string;
+    subject: string;
+    kind?: string;
+  }[],
 ) {
   const rows = read();
   const byId = new Map(results.map((r) => [r.id, r]));
@@ -98,6 +108,7 @@ export function applyReplyResults(
     row.replyAt = hit.at;
     row.replyFrom = hit.from;
     row.replySubject = hit.subject;
+    row.replyKind = hit.kind ?? "";
   }
 
   write(rows);
@@ -160,6 +171,46 @@ export function recentBounceRate(): { bounced: number; sent: number; high: boole
   return { bounced, sent: recent.length, high: recent.length >= 10 && bounced / recent.length > 0.2 };
 }
 
+/**
+ * Applications to the same company inside this window are almost always a
+ * mistake — the same posting screenshotted twice, or forgotten about.
+ */
+const REAPPLY_DAYS = 21;
+
+export type PriorApplication = {
+  company: string;
+  role: string;
+  daysAgo: number;
+  reply: ReplyState;
+};
+
+/** Have we already written to this company, or this exact address, recently? */
+export function priorApplication(
+  company: string,
+  recipients: string[],
+): PriorApplication | null {
+  const normalised = company.trim().toLowerCase();
+  const addresses = new Set(recipients.map((r) => r.toLowerCase()));
+  const cutoff = Date.now() - REAPPLY_DAYS * 24 * 60 * 60 * 1000;
+
+  for (const row of loadHistory()) {
+    if (row.sentAt < cutoff) continue;
+
+    const sameCompany = Boolean(normalised) && row.company.trim().toLowerCase() === normalised;
+    const sameAddress = row.to.some((t) => addresses.has(t.toLowerCase()));
+    if (!sameCompany && !sameAddress) continue;
+
+    return {
+      company: row.company || row.to[0] || "them",
+      role: row.role,
+      daysAgo: Math.max(0, Math.round((Date.now() - row.sentAt) / 86_400_000)),
+      reply: row.reply,
+    };
+  }
+
+  return null;
+}
+
 export function clearHistory() {
   try {
     window.localStorage.removeItem(KEY);
@@ -214,7 +265,12 @@ export function computeInsights(rows: SentEmail[]) {
       .sort((a, b) => b.sent - a.sent);
   };
 
+  const interviews = rows.filter((r) => r.replyKind === "interview").length;
+  const rejections = rows.filter((r) => r.replyKind === "rejection").length;
+
   return {
+    interviews,
+    rejections,
     sent,
     replied: replied.length,
     bounced,

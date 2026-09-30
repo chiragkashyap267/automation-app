@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import DraftCard from "@/components/DraftCard";
+import PasswordGate from "@/components/PasswordGate";
 import PasteZone from "@/components/PasteZone";
 import SourceList from "@/components/SourceList";
 import { prepareImage } from "@/lib/image";
@@ -11,6 +12,7 @@ import { recordSent } from "@/lib/history";
 import { editRatio, loadRecipes } from "@/lib/recipes";
 import { composeEmail } from "@/lib/signature";
 import { validateDraft } from "@/lib/validate";
+import { authHeaders } from "@/lib/appPassword";
 import { canSend, loadDrafts, profileIsUsable, saveDrafts, useProfile } from "@/lib/store";
 import type { Draft, SourceItem } from "@/lib/types";
 
@@ -38,6 +40,7 @@ type ProviderInfo = {
   gemini: { total: number; available: number } | null;
   groq: { total: number; available: number } | null;
   cerebras: { total: number; available: number } | null;
+  protected: boolean;
 };
 
 async function pooled<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]> {
@@ -75,7 +78,7 @@ export default function HomePage() {
       const response = await fetch("/api/config");
       setInfo((await response.json()) as ProviderInfo);
     } catch {
-      setInfo({ visionReader: null, textReader: null, writer: null, gemini: null, groq: null, cerebras: null });
+      setInfo({ visionReader: null, textReader: null, writer: null, gemini: null, groq: null, cerebras: null, protected: false });
     } finally {
       setLoadedConfig(true);
     }
@@ -262,7 +265,7 @@ export default function HomePage() {
       try {
         const response = await fetch("/api/send", {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: authHeaders({ "content-type": "application/json" }),
           body: JSON.stringify({
             profile,
             to: draft.recipients,
@@ -329,6 +332,14 @@ export default function HomePage() {
 
   return (
     <main className="mx-auto max-w-[640px] px-4 pb-32 pt-5">
+      <PasswordGate needed={Boolean(info?.protected)} onReady={() => void refreshConfig()} />
+
+      {loadedConfig && info && !info.protected && (
+        <Banner tone="danger">
+          This deployment has no <code>APP_PASSWORD</code>, so anyone with the URL can spend your
+          API credit. Set it in Vercel and redeploy.
+        </Banner>
+      )}
       <header className="mb-4 flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h1 className="text-[20px] font-bold tracking-tight">JD Mailer</h1>

@@ -1,4 +1,5 @@
 import { cleanRecipient, isGenericMailbox } from "./email";
+import { priorApplication } from "./history";
 import type { Draft, Profile } from "./types";
 
 /**
@@ -281,6 +282,18 @@ export function validateDraft(draft: Draft, profile: Profile): Issue[] {
   }
 
   /* ── advisory ── */
+
+  const already = priorApplication(draft.company, draft.recipients);
+  if (already && draft.status !== "sent") {
+    push({
+      id: "already-applied",
+      severity: "warning",
+      message:
+        `You wrote to ${already.company} ${already.daysAgo === 0 ? "today" : `${already.daysAgo} day${already.daysAgo === 1 ? "" : "s"} ago`}` +
+        `${already.role ? ` about ${already.role}` : ""}` +
+        `${already.reply === "replied" ? " and they replied" : ""}. Sending again may read as spam.`,
+    });
+  }
 
   const invented = unsupportedClaims(draft, profile);
   if (invented.length) {

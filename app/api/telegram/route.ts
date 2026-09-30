@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { readJobs, writeOutreach } from "@/lib/llm";
 import { buildTaskText, companyFromEmail } from "@/lib/llm/prompt";
 import { explainSmtpError, preflight, sendMail } from "@/lib/mailer";
-import { SEED_PROFILE } from "@/lib/seed";
+import { loadBotProfile } from "@/lib/sharedProfile";
 import {
   addToBatch,
   batchingAvailable,
@@ -77,14 +77,11 @@ function allowed(chatId: number): boolean {
   return list.length > 0 && list.includes(String(chatId));
 }
 
-function profile(): Profile {
+async function profile(): Promise<Profile> {
+  const base = await loadBotProfile();
   return {
-    ...EMPTY_PROFILE,
-    ...SEED_PROFILE,
-    // Trim: a stray space or newline in an env var reads as a wrong account.
-    gmailUser: (process.env.GMAIL_USER ?? "").trim(),
-    gmailAppPassword: (process.env.GMAIL_APP_PASSWORD ?? "").replace(/\s+/g, ""),
-    // The browser holds the resume file; the bot fetches one from a URL instead.
+    ...base,
+    // The browser holds the resume file; the bot fetches one from a URL.
     resumeFileName: process.env.RESUME_URL?.trim() ? resumeFilename() : "",
   };
 }
@@ -178,7 +175,7 @@ async function handleSendAll(
   answer: (text: string) => Promise<unknown>,
 ) {
   await sendAllInBatch(chatId, summaryMessageId, {
-    profile: profile(),
+    profile: await profile(),
     attachment: async () => {
       const resume = await fetchResume();
       return resume?.ok ? resume.attachment : undefined;
@@ -240,7 +237,7 @@ function parseAsk(text: string): { email: string; role: string } | null {
 }
 
 async function handleAsk(chatId: number, ask: { email: string; role: string }) {
-  const me = profile();
+  const me = await profile();
   const role = ask.role || me.headline.trim() || "Software Engineer";
   const company = companyFromEmail(ask.email);
 
@@ -326,7 +323,7 @@ async function handleMessage(message: TgMessage) {
 
   await tg("sendChatAction", { chat_id: chatId, action: "typing" });
 
-  const me = profile();
+  const me = await profile();
   let jobs;
   try {
     const { result } = await readJobs({ text: buildTaskText(me, texts), images }, "full");
@@ -461,7 +458,7 @@ async function handleCallback(query: NonNullable<TgUpdate["callback_query"]>) {
     return;
   }
 
-  const me = profile();
+  const me = await profile();
   if (!me.gmailUser || !me.gmailAppPassword) {
     await answer("GMAIL_USER and GMAIL_APP_PASSWORD are not set on the server.");
     return;

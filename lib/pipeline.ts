@@ -1,6 +1,7 @@
 "use client";
 
 import type { Facts } from "./llm/prompt";
+import { authHeaders } from "./appPassword";
 import { cleanRecipients } from "./email";
 import { normalizePlainText } from "./signature";
 import { localExtract } from "./localExtract";
@@ -84,7 +85,7 @@ function toDraft(
 async function postJson<T>(url: string, payload: unknown): Promise<T> {
   const response = await fetch(url, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: authHeaders({ "content-type": "application/json" }),
     body: JSON.stringify(payload),
   });
   const data = (await response.json()) as T & { error?: string };

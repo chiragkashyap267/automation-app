@@ -6,6 +6,7 @@ import { buildSignature, composeEmail } from "@/lib/signature";
 import { checkSendGuard, recordSent } from "@/lib/history";
 import { learnFromSend } from "@/lib/pipeline";
 import { editRatio } from "@/lib/recipes";
+import { authHeaders } from "@/lib/appPassword";
 import { canSend, loadDrafts, saveDrafts, useProfile } from "@/lib/store";
 import { applyFixes, countBySeverity, validateDraft, type Issue } from "@/lib/validate";
 import type { Draft } from "@/lib/types";
@@ -80,7 +81,7 @@ Send anyway?`)) return;
       try {
         const response = await fetch("/api/send", {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers: authHeaders({ "content-type": "application/json" }),
           body: JSON.stringify({
             profile,
             to: draft.recipients,

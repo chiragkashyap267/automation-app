@@ -11,6 +11,8 @@ import {
   type SentEmail,
 } from "@/lib/history";
 import { describeFamily } from "@/lib/recipes";
+import { KIND_LABEL, type ReplyKind } from "@/lib/replyKind";
+import { authHeaders } from "@/lib/appPassword";
 import { canSend, useProfile } from "@/lib/store";
 
 export default function InsightsPage() {
@@ -39,7 +41,7 @@ export default function InsightsPage() {
 
       const response = await fetch("/api/replies", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: authHeaders({ "content-type": "application/json" }),
         body: JSON.stringify({
           profile,
           items: pending.map((r) => ({
@@ -52,7 +54,14 @@ export default function InsightsPage() {
       });
 
       const payload = (await response.json()) as {
-        results?: { id: string; reply: SentEmail["reply"]; at: number; from: string; subject: string }[];
+        results?: {
+          id: string;
+          reply: SentEmail["reply"];
+          at: number;
+          from: string;
+          subject: string;
+          kind?: string;
+        }[];
         scanned?: number;
         error?: string;
       };
@@ -62,9 +71,12 @@ export default function InsightsPage() {
       setRows([...updated]);
 
       const found = (payload.results ?? []).filter((r) => r.reply === "replied").length;
+      const interviews = (payload.results ?? []).filter((r) => r.kind === "interview").length;
       setStatus(
         `Scanned ${payload.scanned ?? 0} inbox message${payload.scanned === 1 ? "" : "s"} — ` +
-          (found ? `${found} new repl${found === 1 ? "y" : "ies"}.` : "no new replies."),
+          (found
+            ? `${found} new repl${found === 1 ? "y" : "ies"}${interviews ? `, ${interviews} look like interview requests 🎉` : ""}.`
+            : "no new replies."),
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not check replies.");
@@ -98,6 +110,12 @@ export default function InsightsPage() {
       {rows.length > 0 && (
         <>
           <div className="mb-3 grid grid-cols-2 gap-2">
+            <Stat
+              label="Interviews"
+              value={String(data.interviews)}
+              tone={data.interviews > 0 ? "ok" : undefined}
+              hint={data.rejections > 0 ? `${data.rejections} rejected` : undefined}
+            />
             <Stat label="Sent" value={String(data.sent)} />
             <Stat
               label="Reply rate"
@@ -160,6 +178,7 @@ export default function InsightsPage() {
                     {row.company || row.replyFrom} — {row.role}
                   </p>
                   <p className="truncate text-[12px]" style={{ color: "var(--muted)" }}>
+                    {row.replyKind ? `${KIND_LABEL[row.replyKind as ReplyKind] ?? ""} · ` : ""}
                     {row.replySubject || "(no subject)"} ·{" "}
                     {new Date(row.replyAt).toLocaleDateString()}
                   </p>

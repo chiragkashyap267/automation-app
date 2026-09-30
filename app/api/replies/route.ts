@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
+import { guard } from "@/lib/auth";
 import { ImapFlow } from "imapflow";
+import { classifyReply } from "@/lib/replyKind";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -31,6 +33,8 @@ type Result = {
   at: number;
   from: string;
   subject: string;
+  /** interview / rejection / recruiter / auto / other */
+  kind: string;
 };
 
 const AUTO_SUBJECT =
@@ -60,6 +64,9 @@ function normalizeId(value: string): string {
 }
 
 export async function POST(request: Request) {
+  const allowed = await guard(request);
+  if (!allowed.ok) return NextResponse.json({ error: allowed.error }, { status: allowed.status });
+
   let body: { profile?: { gmailUser?: string; gmailAppPassword?: string }; items?: SentItem[] };
   try {
     body = (await request.json()) as typeof body;
@@ -159,12 +166,16 @@ export async function POST(request: Request) {
           const existing = results.get(matched.id);
           // A genuine reply outranks an autoresponder for the same thread.
           if (!existing || (existing.reply === "auto" && !isAuto)) {
+            const classified = classifyReply(subject);
             results.set(matched.id, {
               id: matched.id,
-              reply: isAuto ? "auto" : "replied",
+              // The classifier is better at spotting an ATS acknowledgement
+              // than the header heuristics are.
+              reply: isAuto || classified.kind === "auto" ? "auto" : "replied",
               at,
               from,
               subject,
+              kind: classified.kind,
             });
           }
           continue;
@@ -183,7 +194,7 @@ export async function POST(request: Request) {
               (item.to ?? []).some((address) => source.includes(address.toLowerCase()));
 
             if (quoted && !results.has(item.id)) {
-              results.set(item.id, { id: item.id, reply: "bounced", at, from, subject });
+              results.set(item.id, { id: item.id, reply: "bounced", at, from, subject, kind: "bounce" });
             }
           }
         }

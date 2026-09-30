@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { guard } from "@/lib/auth";
 import { readJobs, type LlmImage, type ReadMode } from "@/lib/llm";
 import { buildTaskText } from "@/lib/llm/prompt";
 import { EMPTY_PROFILE, type Profile } from "@/lib/types";
@@ -14,6 +15,11 @@ type Body = {
 };
 
 export async function POST(request: Request) {
+  const allowed = await guard(request);
+  if (!allowed.ok) {
+    return NextResponse.json({ error: allowed.error }, { status: allowed.status });
+  }
+
   let body: Body;
   try {
     body = (await request.json()) as Body;

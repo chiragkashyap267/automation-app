@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { guard } from "@/lib/auth";
 import { writeEmail } from "@/lib/llm";
 import { FactsSchema } from "@/lib/llm/prompt";
 import { EMPTY_PROFILE, type Profile } from "@/lib/types";
@@ -7,6 +8,11 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 export async function POST(request: Request) {
+  const allowed = await guard(request);
+  if (!allowed.ok) {
+    return NextResponse.json({ error: allowed.error }, { status: allowed.status });
+  }
+
   let body: { profile?: Partial<Profile>; facts?: unknown };
   try {
     body = (await request.json()) as typeof body;
