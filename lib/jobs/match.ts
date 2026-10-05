@@ -17,11 +17,65 @@ import type { Match, Posting, Tier } from "./types";
 export const MIN_YEARS = 1;
 export const MAX_YEARS = 3;
 
-/** Delhi NCR first, then the southern hubs, then anywhere in India. */
-const NCR = ["noida", "gurgaon", "gurugram", "delhi", "ncr", "faridabad", "ghaziabad"];
-const SOUTH = ["bengaluru", "bangalore", "hyderabad", "chennai", "pune", "kochi", "coimbatore", "trivandrum", "thiruvananthapuram", "mysuru", "mysore"];
-const REST_OF_INDIA = ["india", "mumbai", "kolkata", "ahmedabad", "jaipur", "indore", "chandigarh", "mohali", "bhubaneswar", "nagpur", "vadodara"];
-const INDIAN_PLACES = [...NCR, ...SOUTH, ...REST_OF_INDIA];
+/**
+ * Delhi NCR first, then the other big tech hubs, then anywhere in India.
+ *
+ * Matched on whole words. A substring test accepted every job in
+ * Indianapolis, because "Indiana" contains "India".
+ */
+const NCR = [
+  "noida", "greater noida", "gurgaon", "gurugram", "delhi", "ncr",
+  "faridabad", "ghaziabad", "manesar", "sonipat", "rohtak", "meerut",
+];
+
+/** The cities that actually carry IT hiring outside the capital region. */
+const HUBS = [
+  "bengaluru", "bangalore", "hyderabad", "chennai", "pune", "pimpri", "chinchwad",
+  "kochi", "cochin", "coimbatore", "trivandrum", "thiruvananthapuram",
+  "mysuru", "mysore", "mangaluru", "mangalore", "madurai", "trichy",
+  "tiruchirappalli", "salem", "erode", "hosur", "vellore", "tirupati",
+  "visakhapatnam", "vizag", "vijayawada", "warangal", "nellore", "guntur",
+  "thrissur", "kozhikode", "calicut", "kollam", "kannur",
+  "hubli", "hubballi", "belgaum", "belagavi", "puducherry", "pondicherry",
+];
+
+/** Everywhere else, including the word "India" on its own. */
+const REST_OF_INDIA = [
+  "india", "mumbai", "thane", "kolkata", "howrah",
+  "ahmedabad", "gandhinagar", "surat", "rajkot", "vadodara", "baroda",
+  "jaipur", "jodhpur", "udaipur", "kota",
+  "indore", "bhopal", "gwalior", "jabalpur",
+  "nagpur", "nashik", "aurangabad",
+  "chandigarh", "mohali", "panchkula", "zirakpur",
+  "ludhiana", "amritsar", "jalandhar",
+  "dehradun", "shimla",
+  "lucknow", "kanpur", "varanasi", "prayagraj", "allahabad", "agra",
+  "guwahati", "patna", "ranchi", "jamshedpur", "raipur", "bhilai",
+  "bhubaneswar", "cuttack", "siliguri", "durgapur",
+  "goa", "panaji", "vasco",
+];
+
+/** Whole-word matcher for a list of place names. */
+function placeMatcher(places: string[]): RegExp {
+  return new RegExp("\\b(" + places.join("|") + ")\\b", "i");
+}
+
+const IS_NCR = placeMatcher(NCR);
+const IS_HUB = placeMatcher(HUBS);
+const IS_INDIA = placeMatcher(REST_OF_INDIA);
+const ALL_PLACES = [...NCR, ...HUBS, ...REST_OF_INDIA];
+
+/**
+ * The cities named in a free-text home location, e.g. "Noida, Uttar
+ * Pradesh" gives ["noida"]. Used to put a job in your own city above an
+ * equally good one across the country.
+ */
+export function homeCities(location: string): string[] {
+  const where = location.toLowerCase();
+  return ALL_PLACES.filter(
+    (p) => p !== "india" && new RegExp("\\b" + p + "\\b").test(where),
+  );
+}
 
 /**
  * A role has to look like one of these to get through at all.
@@ -281,15 +335,15 @@ export function isTechRole(role: string): boolean {
  * boards glue locations together with. What is left after removing them is
  * a real place or nothing at all.
  */
-const NOT_A_PLACE = /\b(remote|hybrid|on[- ]?site|onsite|work from home|wfh|anywhere|global|flexible|multiple locations|various)\b/gi;
+const NOT_A_PLACE = /\b(remote|hybrid|on[- ]?site|onsite|in[- ]?office|work from home|wfh|anywhere|global|flexible|multiple locations|various|n\/?a)\b/gi;
 
 /** Which tier the posting sits in, or null when it is definitely not India. */
 export function indiaTier(posting: Posting): Tier | null {
   const where = lower(posting.location);
 
-  if (NCR.some((p) => where.includes(p))) return "ncr";
-  if (SOUTH.some((p) => where.includes(p))) return "south";
-  if (REST_OF_INDIA.some((p) => where.includes(p))) return "india";
+  if (IS_NCR.test(where)) return "ncr";
+  if (IS_HUB.test(where)) return "south";
+  if (IS_INDIA.test(where)) return "india";
 
   // Everything left either names a place that is not in India, or says
   // nothing about place at all. "Bengaluru; Remote" was caught above;
@@ -371,7 +425,13 @@ export function scorePosting(posting: Posting, profile: Profile, terms: string[]
   else if (ageDays <= 7) score += 15;
   else if (ageDays <= 21) score += 5;
 
-  if (/\bremote\b/.test(lower(posting.location))) score += 10;
+  // Your own city beats an equally good job on the other side of the map.
+  const where = lower(posting.location);
+  if (homeCities(profile.location ?? "").some((c) => new RegExp("\\b" + c + "\\b").test(where))) {
+    score += 15;
+  }
+
+  if (/\bremote\b/.test(where)) score += 10;
   if (posting.description) score += 5;
 
   const reason = [

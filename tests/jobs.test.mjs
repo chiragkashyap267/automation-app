@@ -87,7 +87,35 @@ check("San Francisco plus remote is still rejected", indiaTier(posting({ locatio
 check("Warsaw plus remote is rejected", indiaTier(posting({ location: "PL-Warsaw-Lixa C; Remote" })), null);
 check("remote in the UK is rejected", indiaTier(posting({ location: "Remote, United Kingdom" })), null);
 
+section("places are matched as whole words");
+// "Indiana" contains "India", so a substring test hired you to Indianapolis.
+check("Indiana is not India", indiaTier(posting({ location: "Indianapolis, Indiana" })), null);
+check("Indiana on its own is not India", indiaTier(posting({ location: "Indiana, United States" })), null);
+check("but India still is", indiaTier(posting({ location: "India" })), "india");
+
+section("prime and mid-prime Indian cities");
+const tierOf = (loc) => indiaTier(posting({ location: loc }));
+check("Greater Noida is NCR", tierOf("Greater Noida"), "ncr");
+check("Faridabad is NCR", tierOf("Faridabad, Haryana"), "ncr");
+check("Hyderabad is a hub", tierOf("Nanakramguda, Hyderabad, India"), "south");
+check("Visakhapatnam is a hub", tierOf("Visakhapatnam"), "south");
+check("Coimbatore is a hub", tierOf("Coimbatore, TN"), "south");
+check("Mangaluru is a hub", tierOf("Mangaluru"), "south");
+check("Trichy is a hub", tierOf("Trichy"), "south");
+check("Pimpri Chinchwad is a hub", tierOf("Pimpri Chinchwad, Pune"), "south");
+check("Thane is in India", tierOf("Thane, Maharashtra"), "india");
+check("Goa is in India", tierOf("goa, in"), "india");
+check("Gandhinagar is in India", tierOf("Gandhinagar, Gujarat"), "india");
+check("Lucknow is in India", tierOf("Lucknow"), "india");
+check("Dehradun is in India", tierOf("Dehradun"), "india");
+check("Guwahati is in India", tierOf("Guwahati, Assam"), "india");
+check("Bhubaneswar is in India", tierOf("Bhubaneswar"), "india");
+check("Mohali is in India", tierOf("Mohali, Punjab"), "india");
+
 section("where the job might be");
+// Cloudflare answers "where?" with a working arrangement, not a place.
+check("'In-Office' says nothing, so unknown", indiaTier(posting({ location: "In-Office" })), "unknown");
+check("'N/A' says nothing either", indiaTier(posting({ location: "N/A" })), "unknown");
 check("no location at all is unknown", indiaTier(posting({ location: "" })), "unknown");
 check("'Hybrid' says nothing, so unknown", indiaTier(posting({ location: "Hybrid" })), "unknown");
 check("bare 'Remote' is unknown", indiaTier(posting({ location: "Remote" })), "unknown");
