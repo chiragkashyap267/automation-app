@@ -51,6 +51,7 @@ import {
   queueDrafts,
   schedulingAvailable,
 } from "@/lib/schedule";
+import { digestHeader, jobCard, jobKeyboard, runWatch } from "@/lib/jobs/watch";
 import { composeEmail, normalizePlainText } from "@/lib/signature";
 import { EMPTY_PROFILE, type Profile } from "@/lib/types";
 
@@ -188,6 +189,36 @@ async function handleFollowUps(
  * where, and whether the deployment has picked them up yet. Asking the server
  * itself beats guessing from a dashboard.
  */
+/**
+ * Openings found by watching company career boards.
+ *
+ * Each one arrives with a button that opens the employer's own form, which
+ * is the only way into a big company — there is no address to write to, and
+ * inventing one would waste a send and the goodwill of a real inbox.
+ */
+async function handleJobs(chatId: number) {
+  await tg("sendChatAction", { chat_id: chatId, action: "typing" });
+
+  const me = await profile();
+  const result = await runWatch(me);
+
+  await say(chatId, digestHeader(result));
+
+  const total = result.fresh.length;
+  for (let i = 0; i < total; i += 1) {
+    await say(chatId, jobCard(result.fresh[i], i + 1, total), {
+      reply_markup: jobKeyboard(result.fresh[i]),
+    });
+  }
+
+  if (result.forgetful && total) {
+    await say(
+      chatId,
+      "Note: no store is configured, so I cannot remember what I have already shown you. These will come round again.",
+    );
+  }
+}
+
 async function handleStatus(chatId: number) {
   const providers = providerStatus();
   const me = await profile();
@@ -664,6 +695,8 @@ const HELP = `Two things I can do.
    Or send a bare email address and I will use your usual title.
    This writes a short "do you have openings?" email instead.
 
+/jobs watches company career boards and shows openings that fit you — tech roles, 1-3 years, in India, newest first. Each one has a button that opens the employer's own application form. Nothing is emailed: big companies only take applications through their portal.
+
 I also check every weekday morning for applications that have gone quiet for a week, and offer to nudge them once. Ask any time with /followups.
 
 Every draft also has a ⏰ button that holds it until the next working morning, which reads better than mail sent at midnight. /queue shows what is waiting.
@@ -778,6 +811,11 @@ async function handleMessage(message: TgMessage) {
   if (/^\/followups?\b/i.test(text)) {
     await tg("sendChatAction", { chat_id: chatId, action: "typing" });
     await handleFollowUps(chatId, false, (t) => say(chatId, t));
+    return;
+  }
+
+  if (/^\/jobs?\b/i.test(text)) {
+    await handleJobs(chatId);
     return;
   }
 
