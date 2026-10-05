@@ -1,9 +1,9 @@
-import { kvClaim, kvConfigured } from "../kv";
+import { kvClaim, kvConfigured, kvHas } from "../kv";
 import type { Profile } from "../types";
 import { COMPANIES } from "./companies";
-import { rank } from "./match";
-import { fetchAll } from "./sources";
-import type { Match } from "./types";
+import { collapseDuplicates, indiaTier, passesRoleGates, rank } from "./match";
+import { fetchAll, resolveLocation } from "./sources";
+import type { Match, Posting } from "./types";
 
 /**
  * The morning run: look at every watched board, keep what fits, and show
@@ -23,17 +23,69 @@ const SEEN_TTL = 45 * 24 * 60 * 60;
 /** A phone screen holds a handful. More than this and none get read. */
 export const DIGEST_LIMIT = 8;
 
-const seenKey = (id: string) => `jobseen:${id}`;
+/**
+ * Some boards publish no location at all. Those postings are worth seeing
+ * but could be anywhere, so they never take more than a corner of a digest
+ * that has real Indian openings to show.
+ */
+const UNKNOWN_LOCATION_LIMIT = 2;
 
 /**
- * Claims a posting as shown. Returns true the first time only.
+ * How many unplaced postings to look up per run.
  *
- * With no store configured there is nothing to remember with, so every run
- * would repeat itself — better to say so than to quietly spam.
+ * Each costs a request, and the whole run has to finish inside a serverless
+ * window shared with everything else. Candidates are looked up strongest
+ * first, so the cap falls on the ones least likely to be shown anyway.
  */
-async function claimUnseen(match: Match): Promise<boolean> {
-  if (!kvConfigured()) return true;
-  return kvClaim(seenKey(match.posting.id), SEEN_TTL);
+const RESOLVE_BUDGET = 40;
+
+/**
+ * One employer should not own the morning. Two is enough to show that a
+ * company is hiring; the rest of the digest is better spent on variety,
+ * and anything held back is still there tomorrow.
+ */
+const PER_COMPANY_LIMIT = 2;
+
+const seenKey = (id: string) => `jobseen:${id}`;
+
+/** Has this posting already been in a digest? */
+async function alreadySeen(posting: Posting): Promise<boolean> {
+  if (!kvConfigured()) return false;
+  return kvHas(seenKey(posting.id));
+}
+
+/**
+ * Records a posting as shown.
+ *
+ * Deliberately called after delivery, not before. Claiming first means a
+ * Telegram call that fails halfway through a digest silently buries those
+ * jobs for forty-five days, and they are never offered again.
+ */
+export async function markSeen(match: Match): Promise<void> {
+  if (!kvConfigured()) return;
+  await kvClaim(seenKey(match.posting.id), SEEN_TTL);
+}
+
+/**
+ * Fills in locations for postings whose board would not say.
+ *
+ * Only runs on postings that already cleared the role gates, which turns
+ * thousands of candidates into a few dozen lookups.
+ */
+async function resolveUnplaced(postings: Posting[]): Promise<void> {
+  const unplaced = postings.filter((p) => indiaTier(p) === "unknown").slice(0, RESOLVE_BUDGET);
+  const queue = [...unplaced];
+
+  const workers = Array.from({ length: Math.min(8, queue.length) }, async () => {
+    for (;;) {
+      const posting = queue.shift();
+      if (!posting) return;
+      const found = await resolveLocation(posting);
+      if (found) posting.location = found;
+    }
+  });
+
+  await Promise.all(workers);
 }
 
 export type WatchResult = {
@@ -47,25 +99,32 @@ export type WatchResult = {
   forgetful: boolean;
 };
 
-/**
- * Some boards publish no location at all. Those postings are worth seeing
- * but could be anywhere, so they never take more than a corner of a digest
- * that has real Indian openings to show.
- */
-const UNKNOWN_LOCATION_LIMIT = 2;
-
 export async function runWatch(profile: Profile, limit = DIGEST_LIMIT): Promise<WatchResult> {
   const postings = await fetchAll(COMPANIES);
-  const ranked = rank(postings, profile);
+
+  // Cheap gates first, so the expensive step sees a short list.
+  const candidates = collapseDuplicates(postings.filter((p) => passesRoleGates(p.role)));
+  await resolveUnplaced(candidates);
+
+  const ranked = rank(candidates, profile);
 
   const fresh: Match[] = [];
+  const perCompany = new Map<string, number>();
   let unknown = 0;
   for (const match of ranked) {
     if (fresh.length >= limit) break;
+
+    const company = match.posting.company;
+    if ((perCompany.get(company) ?? 0) >= PER_COMPANY_LIMIT) continue;
+
     const located = match.tier !== "unknown";
     if (!located && unknown >= UNKNOWN_LOCATION_LIMIT) continue;
-    if (!(await claimUnseen(match))) continue;
+
+    // Checked last: it is the only test that costs a round trip.
+    if (await alreadySeen(match.posting)) continue;
+
     if (!located) unknown += 1;
+    perCompany.set(company, (perCompany.get(company) ?? 0) + 1);
     fresh.push(match);
   }
 

@@ -44,6 +44,42 @@ async function getText(url: string): Promise<string | null> {
   }
 }
 
+/**
+ * Joins the places a board names, without saying any of them twice.
+ *
+ * Two fields often describe one place in different words — "Noida" from a
+ * URL and "Noida" from a label, or "Bangalore Karnataka India" and
+ * "Bangalore, Karnataka, India". Comparing them stripped of punctuation
+ * catches both, so a card reads "Noida" rather than "Noida; Noida".
+ */
+export function mergeLocations(parts: (string | undefined)[]): string {
+  // Decompose, then drop the combining marks, so a URL that lost the macron
+  // from "Karnataka" still matches the label that kept it.
+  const COMBINING = new RegExp("[\\u0300-\\u036f]", "g");
+  const bare = (v: string) =>
+    v
+      .normalize("NFD")
+      .replace(COMBINING, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .trim();
+
+  const kept: string[] = [];
+  for (const raw of parts) {
+    const value = (raw ?? "").replace(/\s+/g, " ").trim();
+    if (!value) continue;
+    const key = bare(value);
+    if (!key) continue;
+    // Skip anything already said, and anything another part says more fully.
+    if (kept.some((k) => bare(k).includes(key))) continue;
+    // Replace a part this one says more fully.
+    const idx = kept.findIndex((k) => key.includes(bare(k)));
+    if (idx >= 0) kept[idx] = value;
+    else kept.push(value);
+  }
+  return kept.join("; ");
+}
+
 /** Epoch ms from whatever shape the board uses, or 0 when it says nothing. */
 function when(value: unknown): number {
   if (typeof value === "number" && Number.isFinite(value)) return value;
@@ -130,13 +166,11 @@ async function ashby(c: Company): Promise<Posting[]> {
       source: "ashby" as const,
       company: c.name,
       role: j.title?.trim() ?? "",
-      location: [
-        j.location?.trim(),
-        ...(j.secondaryLocations ?? []).map((s) => s.location?.trim()),
+      location: mergeLocations([
+        j.location,
+        ...(j.secondaryLocations ?? []).map((s) => s.location),
         j.isRemote ? "Remote" : "",
-      ]
-        .filter(Boolean)
-        .join("; "),
+      ]),
       postedAt: when(j.publishedAt),
       applyUrl: j.jobUrl || j.applyUrl || "",
       description: j.descriptionPlain?.trim() || undefined,
@@ -214,13 +248,129 @@ async function successfactors(c: Company): Promise<Posting[]> {
   return out;
 }
 
+type WorkdayJob = {
+  title: string;
+  externalPath: string;
+  locationsText?: string;
+  postedOn?: string;
+  bulletFields?: string[];
+};
+
+/** "Posted 17 Days Ago" and friends. Workday never gives a real date. */
+function workdayPostedAt(posted: string | undefined): number {
+  if (!posted) return 0;
+  const text = posted.toLowerCase();
+  if (text.includes("today")) return Date.now();
+  if (text.includes("yesterday")) return Date.now() - 86_400_000;
+  const days = /(\d+)\s*\+?\s*days?/.exec(text);
+  if (days) return Date.now() - Number(days[1]) * 86_400_000;
+  const months = /(\d+)\s*\+?\s*months?/.exec(text);
+  if (months) return Date.now() - Number(months[1]) * 30 * 86_400_000;
+  return 0;
+}
+
+/**
+ * Workday, which most large employers run on.
+ *
+ * Its slug carries three parts because the URL needs all three:
+ * "adobe/wd5/external_experienced". The jobs endpoint is a POST, and the
+ * only way to ask it for India is a free-text search — so the location
+ * filter still runs afterwards, as it does for every other source.
+ */
+async function workday(c: Company): Promise<Posting[]> {
+  const [tenant, host, site] = c.slug.split("/");
+  if (!tenant || !host || !site) return [];
+
+  const endpoint = `https://${tenant}.${host}.myworkdayjobs.com/wday/cxs/${tenant}/${site}/jobs`;
+  const out: Posting[] = [];
+
+  for (let offset = 0; offset < 200; offset += 20) {
+    let page: WorkdayJob[] = [];
+    try {
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json", "user-agent": UA },
+        body: JSON.stringify({ appliedFacets: {}, limit: 20, offset, searchText: "India" }),
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+      });
+      if (!res.ok) break;
+      page = ((await res.json()) as { jobPostings?: WorkdayJob[] }).jobPostings ?? [];
+    } catch {
+      break;
+    }
+
+    for (const j of page) {
+      // locationsText is often just "2 Locations", which says nothing. The
+      // path always carries a real city, so prefer it and keep the text
+      // only when it is more than a count.
+      const fromPath = /^\/job\/([^/]+)\//.exec(j.externalPath ?? "")?.[1] ?? "";
+      const vague = /^\d+\s+locations?$/i.test((j.locationsText ?? "").trim());
+      // A proper label beats a city pulled out of a URL, which loses
+      // accents and says nothing about the other locations. The path is
+      // only needed when the label is a count rather than a place.
+      const location = mergeLocations([
+        vague ? decodeURIComponent(fromPath).replace(/-/g, " ") : j.locationsText,
+      ]);
+
+      out.push({
+        id: `workday:${tenant}:${j.bulletFields?.[0] ?? j.externalPath}`,
+        source: "workday" as const,
+        company: c.name,
+        role: j.title?.trim() ?? "",
+        location,
+        postedAt: workdayPostedAt(j.postedOn),
+        applyUrl: `https://${tenant}.${host}.myworkdayjobs.com/en-US/${site}${j.externalPath}`,
+      });
+    }
+
+    if (page.length < 20) break;
+  }
+  return out;
+}
+
 const ADAPTERS: Record<SourceKind, (c: Company) => Promise<Posting[]>> = {
   greenhouse,
   lever,
   ashby,
   smartrecruiters,
   successfactors,
+  workday,
 };
+
+/**
+ * Some boards answer "where?" with "Hybrid".
+ *
+ * Greenhouse keeps the real place on the single-job endpoint, in the
+ * office list and in a posting-location field, so one extra request
+ * rescues a job that would otherwise be dropped as unplaceable. It is only
+ * worth spending that request on a posting that has already cleared the
+ * role filter, so this is deliberately not part of the adapter.
+ */
+export async function resolveLocation(posting: Posting): Promise<string | null> {
+  if (posting.source !== "greenhouse") return null;
+
+  const [, slug, id] = posting.id.split(":");
+  if (!slug || !id) return null;
+
+  const job = await getJson<{
+    offices?: { name?: string }[];
+    metadata?: { name?: string; value?: unknown }[];
+  }>(`https://boards-api.greenhouse.io/v1/boards/${slug}/jobs/${id}`);
+  if (!job) return null;
+
+  const offices = (job.offices ?? []).map((o) => o.name?.trim()).filter(Boolean);
+
+  const posted = (job.metadata ?? []).find((m) => /posting location/i.test(m.name ?? ""));
+  // The field arrives as a string that looks like a list: "['Noida, IN']".
+  const fromMetadata = String(posted?.value ?? "")
+    .replace(/[[\]'"]/g, " ")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const all = mergeLocations([...offices, ...fromMetadata]);
+  return all || null;
+}
 
 /** Everything one company currently has open. Never throws. */
 export async function fetchCompany(c: Company): Promise<Posting[]> {

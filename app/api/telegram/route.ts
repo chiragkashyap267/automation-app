@@ -51,7 +51,7 @@ import {
   queueDrafts,
   schedulingAvailable,
 } from "@/lib/schedule";
-import { digestHeader, jobCard, jobKeyboard, runWatch } from "@/lib/jobs/watch";
+import { digestHeader, jobCard, jobKeyboard, markSeen, runWatch } from "@/lib/jobs/watch";
 import { composeEmail, normalizePlainText } from "@/lib/signature";
 import { EMPTY_PROFILE, type Profile } from "@/lib/types";
 
@@ -209,6 +209,9 @@ async function handleJobs(chatId: number) {
     await say(chatId, jobCard(result.fresh[i], i + 1, total), {
       reply_markup: jobKeyboard(result.fresh[i]),
     });
+    // Only once it has actually arrived. Marking it seen any earlier
+    // buries the job for forty-five days if the send failed.
+    await markSeen(result.fresh[i]);
   }
 
   if (result.forgetful && total) {

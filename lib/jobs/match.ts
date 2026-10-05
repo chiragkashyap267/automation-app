@@ -85,32 +85,110 @@ const TECH_TITLES = [
   "technical analyst",
   "system analyst",
   "integration engineer",
+
+  // --- named stacks, which is how smaller firms advertise ---
+  "react developer",
+  "angular developer",
+  "vue developer",
+  "node developer",
+  "java developer",
+  "python developer",
+  "php developer",
+  "laravel",
+  "wordpress",
+  "shopify developer",
+  ".net developer",
+  "dotnet",
+  "golang",
+  "mern",
+  "mean stack",
+  "flutter",
+  "unity developer",
+
+  // --- IT operations and infrastructure ---
+  "it support",
+  "it executive",
+  "it engineer",
+  "it analyst",
+  "it administrator",
+  "it operations",
+  "service desk",
+  "help desk",
+  "helpdesk",
+  "desktop support",
+  "system administrator",
+  "systems administrator",
+  "sysadmin",
+  "network administrator",
+  "server administrator",
+  "linux administrator",
+  "windows administrator",
+  "cloud administrator",
+  "database administrator",
+  "noc engineer",
+  "soc analyst",
+  "security analyst",
+  "implementation engineer",
+  "deployment engineer",
+  "production support",
+  "application support",
+  "product support",
+
+  // --- testing, data and the analyst track ---
+  "software tester",
+  "manual tester",
+  "qa analyst",
+  "quality analyst",
+  "test analyst",
+  "business analyst",
+  "data scientist",
+  "bi developer",
+  "etl developer",
+  "mis executive",
+  "technical writer",
+
+  // --- design roles that sit next to the front end ---
+  "web designer",
+  "ui designer",
+  "ux designer",
+  "ui/ux",
+  "product designer",
 ];
 
-/** Never a technical job, however the title is dressed up. */
-const WRONG_FUNCTION = [
-  "sales engineer",
-  "sales",
-  "account executive",
-  "business development",
-  "pre-sales",
-  "presales",
-  "warehouse",
-  "driver",
-  "accountant",
-  "accounts payable",
-  "collections",
-  "payroll",
-  "recruiter",
-  "talent acquisition",
-  "legal",
-  "paralegal",
-  "facilities",
-  "marketing",
-  "content writer",
-  "customer success",
-  "test employee",
-];
+/**
+ * Never a technical job, however the title is dressed up.
+ *
+ * Matched on whole words. A substring test rejected every "Salesforce
+ * Developer" on the strength of the "sales" inside it.
+ */
+const WRONG_FUNCTION = new RegExp(
+  "\\b(" +
+    [
+      "sales",
+      "account executive",
+      "business development",
+      "pre-?sales",
+      "warehouse",
+      "driver",
+      "accountant",
+      "accounts payable",
+      "collections",
+      "payroll",
+      "recruiter",
+      "recruitment",
+      "talent acquisition",
+      "legal",
+      "paralegal",
+      "facilities",
+      "marketing",
+      "content writer",
+      "copywriter",
+      "customer success",
+      "test employee",
+    ].join("|") +
+    ")\\b",
+  "i",
+);
 
 /**
  * Seniority words, and the years of experience each one really wants.
@@ -193,8 +271,8 @@ export function wantedTerms(profile: Profile): string[] {
 
 /** Is this a technical role at all? */
 export function isTechRole(role: string): boolean {
+  if (WRONG_FUNCTION.test(role)) return false;
   const r = lower(role);
-  if (WRONG_FUNCTION.some((bad) => r.includes(bad))) return false;
   return TECH_TITLES.some((good) => r.includes(good));
 }
 
@@ -308,11 +386,37 @@ export function scorePosting(posting: Posting, profile: Profile, terms: string[]
 }
 
 /**
+ * The gates that depend only on the title.
+ *
+ * Separated out because they are free, while learning where a job really
+ * is can cost a request. Thousands of postings are rejected here so that
+ * only a handful ever need looking up.
+ */
+export function passesRoleGates(role: string): boolean {
+  return isTechRole(role) && seniorityFits(role);
+}
+
+/** Big employers post one role against many requisition numbers. */
+export function dedupeKey(posting: Posting): string {
+  return `${lower(posting.company)}|${lower(posting.role).replace(/[^a-z0-9]+/g, " ").trim()}`;
+}
+
+/** One row per real opening, newest copy of each, nothing scored yet. */
+export function collapseDuplicates(postings: Posting[]): Posting[] {
+  const best = new Map<string, Posting>();
+  for (const posting of postings) {
+    const key = dedupeKey(posting);
+    const seen = best.get(key);
+    if (!seen || posting.postedAt > seen.postedAt) best.set(key, posting);
+  }
+  return [...best.values()];
+}
+
+/**
  * One row per real opening, best first.
  *
- * Big employers post the same role against a dozen requisition numbers.
- * They are one job as far as a morning digest is concerned, so only the
- * best-scoring copy survives.
+ * Duplicate requisitions collapse to the best-scoring copy, so a company
+ * advertising the same role eight times takes one line, not eight.
  */
 export function rank(postings: Posting[], profile: Profile): Match[] {
   const terms = wantedTerms(profile);
@@ -321,7 +425,7 @@ export function rank(postings: Posting[], profile: Profile): Match[] {
   for (const posting of postings) {
     const match = scorePosting(posting, profile, terms);
     if (!match) continue;
-    const key = `${lower(posting.company)}|${lower(posting.role).replace(/[^a-z0-9]+/g, " ").trim()}`;
+    const key = dedupeKey(posting);
     const seen = best.get(key);
     if (!seen || match.score > seen.score) best.set(key, match);
   }

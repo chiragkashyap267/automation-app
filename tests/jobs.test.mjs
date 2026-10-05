@@ -2,6 +2,7 @@
 const {
   impliedYears, indiaTier, isTechRole, parseYears, rank, scorePosting,
   seniorityFits, wantedTerms, digestHeader, jobCard, jobKeyboard, COMPANIES, EMPTY_PROFILE,
+  collapseDuplicates, dedupeKey, passesRoleGates, mergeLocations,
 } = await import("./.jobs.bundle.mjs");
 
 let pass = 0, fail = 0;
@@ -153,6 +154,56 @@ check("nothing at all", parseYears(""), 0);
 section("the watch list");
 check("every company has a name, source and slug", COMPANIES.every((c) => c.name && c.via && c.slug), true);
 check("no slug is registered twice for one source", new Set(COMPANIES.map((c) => `${c.via}:${c.slug}`)).size, COMPANIES.length);
+
+section("the wider IT field, not just software engineering");
+check("a web developer is in", isTechRole("Web Developer"), true);
+check("a React developer is in", isTechRole("React Developer"), true);
+check("a WordPress developer is in", isTechRole("WordPress Developer"), true);
+check("a MERN stack developer is in", isTechRole("MERN Stack Developer"), true);
+check("IT support is in", isTechRole("IT Support Executive"), true);
+check("a desktop support engineer is in", isTechRole("Desktop Support Engineer"), true);
+check("a system administrator is in", isTechRole("System Administrator"), true);
+check("a software tester is in", isTechRole("Software Tester"), true);
+check("a QA analyst is in", isTechRole("QA Analyst"), true);
+check("a business analyst is in", isTechRole("Business Analyst"), true);
+check("a data scientist is in", isTechRole("Data Scientist"), true);
+check("a UI/UX designer is in", isTechRole("UI/UX Designer"), true);
+check("a web designer is in", isTechRole("Web Designer"), true);
+
+section("whole words, so a stack name is not read as a function");
+// "sales" inside "Salesforce" was rejecting every Salesforce job.
+check("a Salesforce developer is not a sales job", isTechRole("Salesforce Developer"), true);
+check("a sales engineer still is", isTechRole("Sales Engineer"), false);
+check("an account executive still is", isTechRole("Account Executive"), false);
+check("a technical recruiter still is", isTechRole("Technical Recruiter"), false);
+
+section("the cheap gates run before anything costly");
+check("a junior tech role passes", passesRoleGates("Associate Software Engineer"), true);
+check("a senior one does not", passesRoleGates("Senior Software Engineer"), false);
+check("a sales one does not", passesRoleGates("Sales Engineer"), false);
+
+section("merging what two fields say about one place");
+check("the same place twice is said once", mergeLocations(["Noida", "Noida"]), "Noida");
+check("the fuller phrasing wins", mergeLocations(["Bangalore", "Bangalore, Karnataka, India"]), "Bangalore, Karnataka, India");
+check("order does not matter", mergeLocations(["Bangalore, Karnataka, India", "Bangalore"]), "Bangalore, Karnataka, India");
+// A URL drops the macron the label keeps; it is still one place, not two.
+check("accents do not split a place in two", mergeLocations(["Bengaluru Karnataka India", "Bengaluru, Karnātaka, India"]).includes(";"), false);
+check("genuinely different places are both kept", mergeLocations(["Noida", "Pune"]), "Noida; Pune");
+check("blanks are dropped", mergeLocations(["", undefined, "Noida"]), "Noida");
+check("whitespace is tidied", mergeLocations(["India   Hyderabad"]), "India Hyderabad");
+
+section("collapsing duplicate requisitions keeps the newest");
+const copies = collapseDuplicates([
+  posting({ id: "old", role: "Full Stack Developer", postedAt: Date.now() - 10 * DAY }),
+  posting({ id: "new", role: "Full Stack  Developer", postedAt: Date.now() }),
+]);
+check("two requisitions become one", copies.length, 1);
+check("and it is the newest", copies[0].id, "new");
+check(
+  "the key ignores spacing and case",
+  dedupeKey(posting({ role: "Full  Stack DEVELOPER" })),
+  dedupeKey(posting({ role: "full stack developer" })),
+);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 if (fail) process.exit(1);

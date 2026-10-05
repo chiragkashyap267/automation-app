@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { digestHeader, jobCard, jobKeyboard, runWatch } from "@/lib/jobs/watch";
+import { digestHeader, jobCard, jobKeyboard, markSeen, runWatch } from "@/lib/jobs/watch";
 import { loadBotProfile } from "@/lib/sharedProfile";
 import { botConfigured, primaryChatId, say } from "@/lib/telegramApi";
 
@@ -52,6 +52,9 @@ export async function GET(request: Request) {
     await say(chatId, jobCard(result.fresh[i], i + 1, total), {
       reply_markup: jobKeyboard(result.fresh[i]),
     });
+    // Only once it has actually arrived, so a failed send does not bury
+    // the job for forty-five days.
+    await markSeen(result.fresh[i]);
   }
 
   return NextResponse.json({

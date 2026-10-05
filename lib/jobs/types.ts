@@ -31,14 +31,18 @@ export type SourceKind =
   | "lever"
   | "ashby"
   | "smartrecruiters"
-  | "successfactors";
+  | "successfactors"
+  | "workday";
 
 /** One row per company. Adding a company is adding one of these. */
 export type Company = {
   /** Shown to you. The adapter's slug is often uglier than the real name. */
   name: string;
   via: SourceKind;
-  /** Board slug for the API sources, hostname for sitemap ones. */
+  /**
+   * Board slug for the API sources, hostname for sitemap ones, and
+   * "tenant/host/site" for Workday, which needs all three to build a URL.
+   */
   slug: string;
 };
 

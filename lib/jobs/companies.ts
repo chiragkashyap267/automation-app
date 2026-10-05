@@ -47,6 +47,18 @@ export const COMPANIES: Company[] = [
   // --- Indian IT services ---
   { name: "HCLTech", via: "successfactors", slug: "careers.hcltech.com" },
 
+  // --- Workday, where most large employers keep their openings ---
+  // Adobe and Mastercard are the NCR ones; the rest hire across India.
+  { name: "Adobe", via: "workday", slug: "adobe/wd5/external_experienced" },
+  { name: "Mastercard", via: "workday", slug: "mastercard/wd1/CorporateCareers" },
+  { name: "NVIDIA", via: "workday", slug: "nvidia/wd5/NVIDIAExternalCareerSite" },
+  { name: "Salesforce", via: "workday", slug: "salesforce/wd12/External_Career_Site" },
+  { name: "HPE", via: "workday", slug: "hpe/wd5/Jobsathpe" },
+  { name: "Medtronic", via: "workday", slug: "medtronic/wd1/MedtronicCareers" },
+  { name: "Autodesk", via: "workday", slug: "autodesk/wd1/Ext" },
+  { name: "PayPal", via: "workday", slug: "paypal/wd1/jobs" },
+  { name: "Workday", via: "workday", slug: "workday/wd5/Workday" },
+
   // --- Global product companies that hire in India ---
   { name: "Databricks", via: "greenhouse", slug: "databricks" },
   { name: "Stripe", via: "greenhouse", slug: "stripe" },
