@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "JD Mailer Autofill",
+  "version": "0.1.0",
+  "description": "Fills job application forms from the profile you already keep in JD Mailer, and attaches your resume.",
+  "permissions": ["storage", "activeTab", "scripting"],
+  "host_permissions": [
+    "https://jdmailer.vercel.app/*",
+    "https://boards.greenhouse.io/*",
+    "https://job-boards.greenhouse.io/*",
+    "https://jobs.lever.co/*",
+    "https://jobs.ashbyhq.com/*",
+    "https://jobs.smartrecruiters.com/*",
+    "https://*.myworkdayjobs.com/*",
+    "https://careers.hcltech.com/*"
+  ],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_popup": "popup.html", "default_title": "Fill this application" },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://boards.greenhouse.io/*",
+        "https://job-boards.greenhouse.io/*",
+        "https://jobs.lever.co/*",
+        "https://jobs.ashbyhq.com/*",
+        "https://jobs.smartrecruiters.com/*",
+        "https://*.myworkdayjobs.com/*",
+        "https://careers.hcltech.com/*"
+      ],
+      "js": ["fields.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

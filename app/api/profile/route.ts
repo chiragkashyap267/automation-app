@@ -1,10 +1,38 @@
 import { NextResponse } from "next/server";
 import { guard } from "@/lib/auth";
-import { saveSharedProfile, sharedProfileAvailable, stripSecrets } from "@/lib/sharedProfile";
+import {
+  loadBotProfile,
+  saveSharedProfile,
+  sharedProfileAvailable,
+  stripSecrets,
+} from "@/lib/sharedProfile";
+import { resolveResumeUrl, resumeFilename } from "@/lib/resumeFetch";
 import { EMPTY_PROFILE, type Profile } from "@/lib/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+/**
+ * Hands the stored profile back out, for the browser extension that fills
+ * application forms.
+ *
+ * Read-only and already stripped of credentials: the Gmail password never
+ * leaves the browser that typed it, and the extension has no use for one.
+ * The resume is named rather than inlined, so the extension fetches the
+ * file itself and this response stays small.
+ */
+export async function GET(request: Request) {
+  const allowed = await guard(request);
+  if (!allowed.ok) return NextResponse.json({ error: allowed.error }, { status: allowed.status });
+
+  const profile = stripSecrets(await loadBotProfile());
+  const resumeUrl = resolveResumeUrl(process.env.RESUME_URL ?? "");
+
+  return NextResponse.json({
+    profile,
+    resume: resumeUrl ? { url: resumeUrl, filename: resumeFilename() } : null,
+  });
+}
 
 /**
  * Mirrors the browser's profile so the Telegram bot writes from the same

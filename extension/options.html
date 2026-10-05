@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>JD Mailer Autofill — settings</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --ink: #11161d;
+        --muted: #5b6673;
+        --line: #e3e7ec;
+        --bg: #ffffff;
+        --accent: #1f6feb;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --ink: #e9edf2;
+          --muted: #9aa5b1;
+          --line: #2a313a;
+          --bg: #161a20;
+        }
+      }
+      body {
+        max-width: 420px;
+        margin: 40px auto;
+        padding: 0 16px;
+        font: 14px/1.6 system-ui, -apple-system, Segoe UI, sans-serif;
+        color: var(--ink);
+        background: var(--bg);
+      }
+      label {
+        display: block;
+        margin: 16px 0 5px;
+        font-weight: 600;
+        font-size: 13px;
+      }
+      input {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 9px 11px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+      }
+      button {
+        margin-top: 18px;
+        padding: 9px 18px;
+        border: 0;
+        border-radius: 8px;
+        background: var(--accent);
+        color: #fff;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      p {
+        color: var(--muted);
+        font-size: 12.5px;
+      }
+      #saved {
+        margin-left: 10px;
+        color: var(--muted);
+        font-size: 12.5px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Autofill settings</h1>
+    <p>
+      Your details are read from the JD Mailer app, so there is nothing to type twice. The
+      password is the same one the web app asks for, and it is stored only in this browser.
+    </p>
+
+    <label for="appUrl">App address</label>
+    <input id="appUrl" type="url" placeholder="https://jdmailer.vercel.app" />
+
+    <label for="appPassword">App password</label>
+    <input id="appPassword" type="password" autocomplete="off" />
+
+    <button id="save">Save</button><span id="saved"></span>
+
+    <p style="margin-top: 26px">
+      Nothing is ever submitted for you. The extension fills what it recognises, leaves salary
+      and notice period alone, and never ticks a consent box.
+    </p>
+    <script src="options.js"></script>
+  </body>
+</html>
