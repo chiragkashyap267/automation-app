@@ -4,7 +4,7 @@ for (let i = 1; i <= 2; i++) process.env[`GEMINI_API_KEY_${i}`] = `gem-${i}`;
 process.env.GROQ_API_KEY_1 = "groq-1";
 delete process.env.ANTHROPIC_API_KEY;
 
-const { textReaders, visionReaders, readJobs, reviseIfNeeded, geminiPool, groqPool } =
+const { textReaders, visionReaders, readJobs, reviseIfNeeded, geminiPool, groqPool, markFailure } =
   await import("./.readers.bundle.mjs");
 
 let pass = 0, fail = 0;
@@ -115,6 +115,45 @@ console.log("-- the one-shot draft is checked too");
   check("no writer available still returns", bad.revised, false);
 
   globalThis.fetch = watched;
+}
+
+console.log("");
+console.log("-- a spent provider stops going first");
+{
+  geminiPool.reset(); groqPool.reset();
+  check("groq leads while it is healthy", textReaders(), ["groq", "gemini"]);
+
+  // Ordering used to count how many keys a provider had, which does not
+  // change when they stop working — so a dead key kept its place at the
+  // front and burned a round trip on every single request.
+  const spent = groqPool.keysToTry()[0];
+  markFailure(spent, "daily-quota", "quota exhausted");
+
+  check("a spent groq drops behind gemini", textReaders(), ["gemini", "groq"]);
+  // It stays in the list: one stale attempt beats refusing to try.
+  check("but it is still tried last", textReaders().includes("groq"), true);
+  check("availability is what moved it", groqPool.available(), 0);
+  check("its key is still counted", groqPool.count(), 1);
+
+  geminiPool.reset(); groqPool.reset();
+  check("a reset pool leads again", textReaders(), ["groq", "gemini"]);
+}
+
+console.log("");
+console.log("-- the error names every provider, not just the first");
+{
+  geminiPool.reset(); groqPool.reset();
+  globalThis.fetch = async (url) =>
+    String(url).includes("groq.com")
+      ? new Response(JSON.stringify({ error: { message: "groq daily quota exhausted" } }), { status: 429 })
+      : new Response(JSON.stringify({ error: { code: 429, message: "gemini is rate limited" } }), { status: 429 });
+
+  const message = await readJobs({ text: "a job", images: [] }, "full").then(() => "", (e) => e.message);
+
+  // The old behaviour reported only the first failure, so the user was
+  // always told it was Groq's fault whatever had actually gone wrong.
+  check("both providers are named", /groq/i.test(message) && /gemini/i.test(message), true);
+  check("it says they all failed", /All \d+ providers failed/.test(message), true);
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

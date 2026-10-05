@@ -27,6 +27,8 @@ export type KeyPoolStatus = {
   cooling: { label: string; secondsLeft: number; reason: string }[];
 };
 
+import { publishCooldown } from "./cooldown";
+
 const MINUTE = 60_000;
 const COOLDOWN: Record<KeyFailure, number> = {
   "rate-limit": 65 * 1000, // free tier limits are per-minute
@@ -39,6 +41,10 @@ const MAX_SLOTS = 20;
 
 export type KeyPool = {
   count: () => number;
+  /** Keys not currently cooling down. This is what ordering should use. */
+  available: () => number;
+  /** Applies cooldowns recorded by other invocations. */
+  applyCooldowns: (map: Record<string, number>) => void;
   status: () => KeyPoolStatus;
   keysToTry: () => KeyState[];
   reset: () => void;
@@ -81,6 +87,22 @@ export function createKeyPool(prefix: string): KeyPool {
 
   return {
     count: () => get().length,
+
+    available() {
+      const now = Date.now();
+      return get().filter((k) => k.cooldownUntil <= now).length;
+    },
+
+    applyCooldowns(map) {
+      for (const state of get()) {
+        const until = map[state.label];
+        // Only ever extend: this invocation may know about a failure
+        // the shared copy has not caught up with.
+        if (typeof until === "number" && until > state.cooldownUntil) {
+          state.cooldownUntil = until;
+        }
+      }
+    },
 
     reset() {
       pool = null;
@@ -137,6 +159,10 @@ export function markFailure(
   state.consecutiveFailures += 1;
   state.lastError = detail.slice(0, 120);
   state.cooldownUntil = Date.now() + Math.max(retryAfterMs ?? 0, COOLDOWN[failure]);
+
+  // The next invocation starts with a blank pool, so a cooldown only means
+  // anything if it is written somewhere shared.
+  void publishCooldown(state.label, state.cooldownUntil);
 }
 
 export function markSuccess(state: KeyState) {

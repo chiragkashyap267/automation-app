@@ -22,8 +22,10 @@ globalThis.fetch = async (url, init) => {
   }
 };
 
-const { clearQueue, describeWindow, loadQueue, nextWindow, queueDrafts, sendQueued, buildDigest } =
-  await import("./.schedule.bundle.mjs");
+const {
+  clearQueue, describeWindow, loadQueue, nextWindow, queueDrafts, sendQueued, buildDigest,
+  loadCooldowns, publishCooldown, forgetCooldownCache, createKeyPool,
+} = await import("./.schedule.bundle.mjs");
 
 let pass = 0, fail = 0;
 const check = (label, actual, expected) => {
@@ -132,6 +134,45 @@ check("a bounce is worth saying", bounced.includes("could not be delivered"), tr
 
 const justSent = buildDigest({ outbox, state: {}, fresh: [], justSent: 3, quiet: 0 });
 check("queued mail going out is reported", justSent.includes("3 queued email"), true);
+
+section("spent keys are remembered between invocations");
+{
+  // Every serverless invocation starts with a fresh key pool, so a key that
+  // hit its daily quota looked healthy again on the very next request. Ten
+  // pasted job descriptions meant ten wasted round trips to the same dead
+  // key, and the user was told it was that provider's fault every time.
+  const hour = Date.now() + 3600_000;
+  await publishCooldown("GROQ_API_KEY_1", hour);
+  forgetCooldownCache();
+
+  const seen = await loadCooldowns();
+  check("the cooldown survives", seen.GROQ_API_KEY_1, hour);
+
+  // A later invocation knowing less must not revive a dead key.
+  await publishCooldown("GROQ_API_KEY_1", Date.now() + 1000);
+  forgetCooldownCache();
+  check("a shorter cooldown does not shorten it", (await loadCooldowns()).GROQ_API_KEY_1, hour);
+
+  // An expired entry should not keep a working key out.
+  await publishCooldown("GROQ_API_KEY_9", Date.now() - 5000);
+  forgetCooldownCache();
+  check("an expired cooldown is dropped", "GROQ_API_KEY_9" in (await loadCooldowns()), false);
+
+  process.env.TESTPOOL_API_KEY_1 = "aaa";
+  process.env.TESTPOOL_API_KEY_2 = "bbb";
+  const pool = createKeyPool("TESTPOOL_API_KEY");
+  check("both keys start usable", pool.available(), 2);
+
+  pool.applyCooldowns({ TESTPOOL_API_KEY_1: Date.now() + 3600_000 });
+  check("a shared cooldown takes one out", pool.available(), 1);
+  check("the key itself is still there", pool.count(), 2);
+  // Still last-resort material rather than discarded.
+  check("and remains a last resort", pool.keysToTry().length, 2);
+  check("the usable one goes first", pool.keysToTry()[0].label, "TESTPOOL_API_KEY_2");
+
+  pool.applyCooldowns({ TESTPOOL_API_KEY_1: Date.now() - 1000 });
+  check("a stale shared value cannot revive it", pool.available(), 1);
+}
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

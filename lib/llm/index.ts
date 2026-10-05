@@ -5,6 +5,7 @@ import { outreachWithCerebras, pitchWithCerebras, reviseWithCerebras, writeWithC
 import { cerebrasPool, geminiPool, groqPool } from "./keyPool";
 import { dedupeJobs } from "@/lib/dedupe";
 import { inventedClientsIn, unsupportedClaimsIn } from "@/lib/validate";
+import { loadCooldowns } from "./cooldown";
 import type { Lead, ServicesProfile } from "@/lib/services";
 import { EMPTY_PROFILE } from "@/lib/types";
 import type { Facts, OutreachTarget, Written } from "./prompt";
@@ -47,7 +48,7 @@ export function textReaders(): TextReader[] {
   if (process.env.ANTHROPIC_API_KEY) list.push("claude");
   if (groqPool.count() > 0) list.push("groq");
   if (geminiPool.count() > 0) list.push("gemini");
-  return list;
+  return liveFirst(list);
 }
 
 export function activeTextReader(): TextReader | null {
@@ -59,7 +60,7 @@ export function visionReaders(): VisionReader[] {
   const list: VisionReader[] = [];
   if (process.env.ANTHROPIC_API_KEY) list.push("claude");
   if (geminiPool.count() > 0) list.push("gemini");
-  return list;
+  return liveFirst(list);
 }
 
 /** Writing never sees an image, so the fast free provider goes first. */
@@ -88,10 +89,66 @@ async function readWith(
   return readWithGroq(req.text, mode);
 }
 
+/**
+ * Whether a provider has a key that is not cooling down.
+ *
+ * Ordering used to ask how many keys a provider had, which stays the same
+ * whether they work or not — so a provider whose only key was spent kept its
+ * place at the front of the queue and burned a round trip on every request.
+ */
+function hasHeadroom(name: TextReader | WriterName): boolean {
+  if (name === "claude") return Boolean(process.env.ANTHROPIC_API_KEY);
+  if (name === "groq") return groqPool.available() > 0;
+  if (name === "cerebras") return cerebrasPool.available() > 0;
+  return geminiPool.available() > 0;
+}
+
+/**
+ * Keeps the preference order but moves spent providers to the back. They stay
+ * in the list: a stale attempt beats refusing to try when everything is cold.
+ */
+function liveFirst<T extends TextReader | WriterName>(list: T[]): T[] {
+  return [...list.filter(hasHeadroom), ...list.filter((n) => !hasHeadroom(n))];
+}
+
+/**
+ * Loads cooldowns recorded by earlier invocations before anything is chosen.
+ * Without this each request starts believing every key is healthy.
+ */
+export async function primeCooldowns(): Promise<void> {
+  try {
+    const map = await loadCooldowns();
+    if (!Object.keys(map).length) return;
+    geminiPool.applyCooldowns(map);
+    groqPool.applyCooldowns(map);
+    cerebrasPool.applyCooldowns(map);
+  } catch (err) {
+    console.error("[llm] could not read cooldowns", err instanceof Error ? err.message : err);
+  }
+}
+
+/**
+ * One message naming what every provider said.
+ *
+ * Reporting only the first failure meant the user always saw the first
+ * provider's complaint — "Groq quota exhausted" — even when the request
+ * actually died somewhere else entirely.
+ */
+function describeAllFailures(failures: { provider: string; message: string }[]): string {
+  if (!failures.length) return "No provider was available to try.";
+  if (failures.length === 1) return failures[0].message;
+
+  const detail = failures.map((f) => `${f.provider}: ${f.message}`).join(" — ");
+  return `All ${failures.length} providers failed. ${detail}`;
+}
+
 export async function readJobs(
   req: LlmRequest,
   mode: ReadMode,
 ): Promise<{ result: ReadResult; reader: TextReader }> {
+  // Cooldowns from earlier invocations, so a spent key is not tried first.
+  await primeCooldowns();
+
   // Screenshots need vision; text can go to any reader.
   const candidates: TextReader[] = req.images.length ? visionReaders() : textReaders();
 
@@ -107,7 +164,7 @@ export async function readJobs(
 
   // One provider's pool running dry should not fail the request when another
   // provider could do the same job.
-  let firstError: unknown;
+  const failures: { provider: string; message: string }[] = [];
   for (const reader of candidates) {
     try {
       const result = await readWith(reader, req, mode);
@@ -117,12 +174,13 @@ export async function readJobs(
       }
       return { result: { jobs }, reader };
     } catch (err) {
-      firstError ??= err;
-      console.error(`[read] ${reader} failed, trying next`, err instanceof Error ? err.message : err);
+      const message = err instanceof Error ? err.message : String(err);
+      failures.push({ provider: reader, message });
+      console.error(`[read] ${reader} failed, trying next`, message);
     }
   }
 
-  throw firstError instanceof Error ? firstError : new Error("Could not read this job description.");
+  throw new Error(describeAllFailures(failures));
 }
 
 /**
@@ -141,8 +199,10 @@ function writers(): WriterName[] {
     .map((s) => s.trim().toLowerCase())
     .filter((s): s is WriterName => available.has(s as WriterName));
 
-  // Anything configured comes first; the rest still act as fallbacks.
-  return [...new Set([...preferred, ...available])];
+  // Anything configured comes first; the rest still act as fallbacks, and
+  // a provider with no usable key drops to the back of whatever order
+  // that produces.
+  return liveFirst([...new Set([...preferred, ...available])]);
 }
 
 const MIN_WORDS = 45;
@@ -199,10 +259,12 @@ export async function writeOutreach(
   profile: Profile,
   target: OutreachTarget,
 ): Promise<{ written: Written; writer: WriterName }> {
+  await primeCooldowns();
+
   const candidates = writers();
   if (!candidates.length) throw new Error("No key that can write emails is set.");
 
-  let firstError: unknown;
+  const failures: { provider: string; message: string }[] = [];
   for (const writer of candidates) {
     try {
       const written =
@@ -215,22 +277,25 @@ export async function writeOutreach(
               : await outreachWithGemini(profile, target);
       return { written, writer };
     } catch (err) {
-      firstError ??= err;
-      console.error(`[outreach] ${writer} failed, trying next`, err instanceof Error ? err.message : err);
+      const message = err instanceof Error ? err.message : String(err);
+      failures.push({ provider: writer, message });
+      console.error(`[outreach] ${writer} failed, trying next`, message);
     }
   }
 
-  throw firstError instanceof Error ? firstError : new Error("Could not write this email.");
+  throw new Error(describeAllFailures(failures));
 }
 
 export async function writeEmail(
   profile: Profile,
   facts: Facts,
 ): Promise<{ written: Written; writer: WriterName; revised: boolean }> {
+  await primeCooldowns();
+
   const candidates = writers();
   if (!candidates.length) throw new Error("No key that can write emails is set.");
 
-  let firstError: unknown;
+  const failures: { provider: string; message: string }[] = [];
 
   for (const writer of candidates) {
     let written: Written;
@@ -244,8 +309,9 @@ export async function writeEmail(
               ? await writeWithClaude(profile, facts)
               : await writeWithGemini(profile, facts);
     } catch (err) {
-      firstError ??= err;
-      console.error(`[write] ${writer} failed, trying next`, err instanceof Error ? err.message : err);
+      const message = err instanceof Error ? err.message : String(err);
+      failures.push({ provider: writer, message });
+      console.error(`[write] ${writer} failed, trying next`, message);
       continue;
     }
 
@@ -266,7 +332,7 @@ export async function writeEmail(
     return { written, writer, revised: false };
   }
 
-  throw firstError instanceof Error ? firstError : new Error("Could not write this email.");
+  throw new Error(describeAllFailures(failures));
 }
 
 /**
@@ -364,18 +430,21 @@ export async function writePitch(
   services: ServicesProfile,
   lead: Lead,
 ): Promise<{ written: Written; writer: WriterName; problems: string[] }> {
+  await primeCooldowns();
+
   const candidates = writers();
   if (!candidates.length) throw new Error("No key that can write emails is set.");
 
-  let firstError: unknown;
+  const failures: { provider: string; message: string }[] = [];
 
   for (const writer of candidates) {
     let written: Written;
     try {
       written = await pitchWith(writer, services, lead);
     } catch (err) {
-      firstError ??= err;
-      console.error(`[pitch] ${writer} failed, trying next`, err instanceof Error ? err.message : err);
+      const message = err instanceof Error ? err.message : String(err);
+      failures.push({ provider: writer, message });
+      console.error(`[pitch] ${writer} failed, trying next`, message);
       continue;
     }
 
@@ -414,5 +483,5 @@ export async function writePitch(
     return { written, writer, problems };
   }
 
-  throw firstError instanceof Error ? firstError : new Error("Could not write this pitch.");
+  throw new Error(describeAllFailures(failures));
 }
