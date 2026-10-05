@@ -14,6 +14,23 @@ import type { Company } from "./types";
  *   smartrecruiters  api.smartrecruiters.com/v1/companies/SLUG/postings
  *   successfactors   https://HOST/sitemap.xml
  */
+/**
+ * Checked, and not addable. Recorded so the work is not repeated:
+ *
+ *   TCS          ibegin.tcs.com answers nothing at all from a datacentre
+ *                IP (no HTTP response, not a 403), and tcs.com/careers is
+ *                403. Nothing to fetch from a server.
+ *   Infosys      career.infosys.com is an Angular app with an empty
+ *                sitemap; its jobs API sits behind Keycloak auth.
+ *   GlobalLogic  jobs load through a nonce-protected WordPress AJAX call,
+ *                the WP REST API is disabled, and the sitemap index is
+ *                empty. jobs.globallogic.com is SSO for staff.
+ *   Hexaware     jobs.hexaware.com is 403 with no sitemap.
+ *
+ * These four are worth revisiting only if they publish a feed. Until then
+ * their openings reach you the way everyone else's do — their job-alert
+ * emails, which the inbox scanner could be taught to read.
+ */
 export const COMPANIES: Company[] = [
   // --- Indian product companies and unicorns ---
   { name: "Paytm", via: "lever", slug: "paytm" },
