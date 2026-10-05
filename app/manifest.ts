@@ -5,9 +5,11 @@ import type { MetadataRoute } from "next";
  * so a job post can be sent straight here from LinkedIn, WhatsApp or anywhere
  * else — no bot, no API, no account of yours involved.
  *
- * The share target is a GET so it needs no service worker: Android puts the
- * shared text in the query string and the app picks it up on load. GET targets
- * cannot carry files, so screenshots still go through the picker in the app.
+ * The share target is a POST, which is the only kind that can carry files.
+ * That is what lets a screenshot go straight from the screenshot notification
+ * into the app, instead of being saved, then found again in the picker. The
+ * service worker catches the POST, keeps the payload, and sends the app to a
+ * plain URL — a page cannot read a POST body any other way.
  */
 export default function manifest(): MetadataRoute.Manifest {
   return {
@@ -30,9 +32,16 @@ export default function manifest(): MetadataRoute.Manifest {
     ],
     // Not yet in Next's Manifest type, but a valid part of the web app manifest.
     share_target: {
-      action: "/",
-      method: "GET",
-      params: { title: "share_title", text: "share_text", url: "share_url" },
+      action: "/share",
+      method: "POST",
+      enctype: "multipart/form-data",
+      params: {
+        title: "share_title",
+        text: "share_text",
+        url: "share_url",
+        // Android hands over screenshots here. Several, if you picked several.
+        files: [{ name: "media", accept: ["image/*"] }],
+      },
     },
   } as MetadataRoute.Manifest;
 }

@@ -11,10 +11,22 @@
 const DEFAULT_APP = "https://jdmailer.vercel.app";
 
 async function settings() {
-  const stored = await chrome.storage.local.get(["appUrl", "appPassword"]);
+  const stored = await chrome.storage.local.get([
+    "appUrl",
+    "appPassword",
+    "country",
+    "gender",
+    "nationality",
+  ]);
   return {
     appUrl: (stored.appUrl || DEFAULT_APP).replace(/\/+$/, ""),
     appPassword: stored.appPassword || "",
+    // Asked for on nearly every form, kept by nothing else.
+    extras: {
+      country: stored.country || "",
+      gender: stored.gender || "",
+      nationality: stored.nationality || "",
+    },
   };
 }
 
@@ -23,9 +35,14 @@ let cached = null;
 const CACHE_MS = 5 * 60 * 1000;
 
 async function loadProfile(force) {
-  if (!force && cached && Date.now() - cached.at < CACHE_MS) return cached.data;
+  const { appUrl, appPassword, extras } = await settings();
 
-  const { appUrl, appPassword } = await settings();
+  // The extras are local and free to read, so a cached profile still picks
+  // up an answer you changed a moment ago.
+  if (!force && cached && Date.now() - cached.at < CACHE_MS) {
+    return { ...cached.data, profile: { ...cached.data.profile, ...extras } };
+  }
+
   if (!appPassword) throw new Error("Set your app password in the extension options first.");
 
   const res = await fetch(`${appUrl}/api/profile`, {
@@ -41,7 +58,7 @@ async function loadProfile(force) {
   }
 
   cached = { at: Date.now(), data };
-  return data;
+  return { ...data, profile: { ...data.profile, ...extras } };
 }
 
 /** Base64 so the file can cross the message boundary intact. */

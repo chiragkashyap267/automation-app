@@ -1,19 +1,30 @@
-/** Stores the app address and password in this browser only. */
+/** Stores the app address, the password, and the few answers it does not keep. */
 
-const url = document.getElementById("appUrl");
-const password = document.getElementById("appPassword");
-const saved = document.getElementById("saved");
+const FIELDS = ["appUrl", "appPassword", "country", "gender", "nationality"];
 
-chrome.storage.local.get(["appUrl", "appPassword"]).then((s) => {
-  url.value = s.appUrl || "https://jdmailer.vercel.app";
-  password.value = s.appPassword || "";
+/** Sensible for the person this was built for; all of it is editable. */
+const DEFAULTS = {
+  appUrl: "https://jdmailer.vercel.app",
+  country: "India",
+  nationality: "Indian",
+};
+
+const el = (id) => document.getElementById(id);
+const saved = el("saved");
+
+chrome.storage.local.get(FIELDS).then((stored) => {
+  for (const name of FIELDS) {
+    el(name).value = stored[name] ?? DEFAULTS[name] ?? "";
+  }
 });
 
-document.getElementById("save").addEventListener("click", async () => {
-  await chrome.storage.local.set({
-    appUrl: url.value.trim(),
-    appPassword: password.value.trim(),
-  });
+el("save").addEventListener("click", async () => {
+  const values = {};
+  for (const name of FIELDS) values[name] = el(name).value.trim();
+
+  await chrome.storage.local.set(values);
   saved.textContent = "Saved.";
-  setTimeout(() => (saved.textContent = ""), 2000);
+  setTimeout(() => {
+    saved.textContent = "";
+  }, 2000);
 });

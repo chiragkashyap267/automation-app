@@ -45,6 +45,10 @@
     ["currentCtc", /\b(current)\b.*\b(ctc|salary|compensation)\b/],
     ["expectedCtc", /\b(expected|desired)\b.*\b(ctc|salary|compensation)\b/],
     ["experience", /\b(years?|total)\b.*\bexperience\b|\bexperience\b.*\byears?\b/],
+    // "sex" does not match "sexual orientation": the word boundary after
+    // "sex" fails against "sexual", and that is a different question.
+    ["gender", /\b(gender|sex)\b/],
+    ["nationality", /\b(nationality|citizenship)\b/],
     ["city", /\b(city|town)\b/],
     ["state", /\b(state|province|region)\b/],
     ["country", /\bcountry\b/],
@@ -121,7 +125,12 @@
       experience: p.yearsExperience,
       city: cityFrom(p.location),
       location: p.location,
-      country: countryFrom(p.location),
+      // Answered once in the extension's own options, because the app does
+      // not track them and a form asks for them on every application.
+      gender: p.gender,
+      nationality: p.nationality || p.country,
+      // What you set wins; otherwise work it out from where you live.
+      country: p.country || countryFrom(p.location),
       coverLetter: "",
     };
 

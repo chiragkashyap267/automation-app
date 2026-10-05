@@ -7,6 +7,7 @@ import PasswordGate from "@/components/PasswordGate";
 import PasteZone from "@/components/PasteZone";
 import SourceList from "@/components/SourceList";
 import { prepareImage } from "@/lib/image";
+import { classifyShare, LINK_ONLY_NOTE } from "@/lib/share";
 import { learnFromSend, newId, processGroup, rewriteDraft, type RunMode } from "@/lib/pipeline";
 import { recordSent } from "@/lib/history";
 import { editRatio, loadRecipes } from "@/lib/recipes";
@@ -120,16 +121,9 @@ export default function HomePage() {
 
     window.history.replaceState({}, "", window.location.pathname);
 
-    const shared = [title, text, url].filter(Boolean).join("\n").trim();
-    const wordCount = shared.split(/\s+/).filter(Boolean).length;
-    const looksLikeBareLink = /^https?:\/\/\S+$/.test(shared);
-
-    if (looksLikeBareLink || wordCount < 12) {
-      // LinkedIn shares a job *listing* as a link, and the page behind it
-      // needs a login, so there is nothing here to read.
-      setShareNote(
-        "That share only contained a link, not the job text. Open the post, select the text and share that — or take a screenshot.",
-      );
+    const incoming = classifyShare(title, text, url);
+    if (incoming.kind !== "usable") {
+      setShareNote(LINK_ONLY_NOTE);
       return;
     }
 
@@ -142,7 +136,7 @@ export default function HomePage() {
         kind: "text",
         data: "",
         mediaType: "",
-        text: shared,
+        text: incoming.text,
         preview: "",
         groupId: newId(),
       },
@@ -191,6 +185,75 @@ export default function HomePage() {
       { id: newId(), kind: "text", data: "", mediaType: "", text, preview: "", groupId: newId() },
     ]);
   }, []);
+
+  // Arriving from the share sheet with files attached. The service worker
+  // took the POST and parked it, because a page cannot read a POST body it
+  // was navigated to; "?shared=1" is the signal that something is waiting.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const shared = params.get("shared");
+    if (!shared) return;
+    window.history.replaceState({}, "", window.location.pathname);
+
+    // The share arrived before the service worker was running, so the
+    // server caught it and the files are gone. Say so plainly.
+    if (shared === "cold") {
+      setShareNote(
+        "The app was not fully installed yet, so that share was lost. It will work from now on — try sharing again.",
+      );
+      return;
+    }
+
+    void (async () => {
+      let text = "";
+      const files: File[] = [];
+
+      try {
+        const cache = await caches.open("jdmailer-share");
+
+        const textHit = await cache.match("/__share__/text");
+        if (textHit) text = (await textHit.text()).trim();
+
+        const countHit = await cache.match("/__share__/count");
+        const count = countHit ? Number(await countHit.text()) : 0;
+
+        for (let i = 0; i < count; i += 1) {
+          const hit = await cache.match(`/__share__/file/${i}`);
+          if (!hit) continue;
+          const name = decodeURIComponent(hit.headers.get("x-share-filename") ?? `shared-${i}.png`);
+          const type = hit.headers.get("content-type") ?? "image/png";
+          files.push(new File([await hit.blob()], name, { type }));
+        }
+
+        // Read once. A refresh should not add the same post twice.
+        await caches.delete("jdmailer-share");
+      } catch {
+        setShareNote("Something was shared but could not be read. Try again.");
+        return;
+      }
+
+      if (files.length) {
+        addImages(files);
+        setShareNote(
+          files.length === 1
+            ? "Screenshot added from share. Write the email when you are ready."
+            : `${files.length} screenshots added from share.`,
+        );
+        return;
+      }
+
+      // No file, so this was a text or link share. A bare LinkedIn link has
+      // nothing readable behind it for anyone who is not logged in.
+      const incoming = classifyShare(text);
+      if (incoming.kind !== "usable") {
+        setShareNote(LINK_ONLY_NOTE);
+        return;
+      }
+
+      addText(incoming.text);
+      setShareNote("Added from share. Check it looks complete, then write the email.");
+    })();
+  }, [addImages, addText]);
 
   const mergeUp = useCallback((id: string) => {
     setItems((prev) => {

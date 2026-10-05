@@ -73,17 +73,116 @@
     el.dispatchEvent(new Event("change", { bubbles: true }));
   }
 
-  /** Picks the option whose text or value matches, if one does. */
+  /**
+   * Picks the option that means what we want.
+   *
+   * Exact first, then a prefix. "India" has to find itself in a list where
+   * it is spelled "India (IN)", and "Male" in one offering "Male" beside
+   * "Female" — but never by substring, or "Male" would match "Female".
+   */
   function selectOption(el, value) {
     const want = value.trim().toLowerCase();
-    const option = [...el.options].find(
-      (o) =>
-        o.value.trim().toLowerCase() === want || o.textContent.trim().toLowerCase() === want,
-    );
+    const options = [...el.options];
+    const text = (o) => o.textContent.trim().toLowerCase();
+
+    const exact = options.find((o) => text(o) === want || o.value.trim().toLowerCase() === want);
+    const prefix = options.find((o) => text(o).startsWith(want));
+
+    const option = exact || prefix;
     if (!option) return false;
     setValue(el, option.value);
     return true;
   }
+
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  /**
+   * The dropdowns that are not dropdowns.
+   *
+   * Workday and most modern boards build their own from divs, so there is
+   * no <select> and no options until the thing is opened. Opening it and
+   * clicking the right row is the only way in.
+   */
+  async function pickFromListbox(el, value) {
+    const want = value.trim().toLowerCase();
+
+    el.focus();
+    el.click();
+    await wait(180);
+
+    const rows = [
+      ...document.querySelectorAll('[role="option"], [role="listbox"] li, [role="menuitem"]'),
+    ].filter((r) => r.offsetParent !== null);
+
+    const label = (r) => (r.textContent || "").trim().toLowerCase();
+    const hit = rows.find((r) => label(r) === want) || rows.find((r) => label(r).startsWith(want));
+
+    if (!hit) {
+      el.blur();
+      return false;
+    }
+    hit.click();
+    await wait(60);
+    return true;
+  }
+
+  function isCustomDropdown(el) {
+    const role = el.getAttribute("role");
+    return (
+      role === "combobox" ||
+      role === "listbox" ||
+      el.getAttribute("aria-haspopup") === "listbox" ||
+      el.hasAttribute("aria-expanded")
+    );
+  }
+
+  /**
+   * The question a group of radio buttons is really asking.
+   *
+   * The label on each button is its answer ("Male"), not the question, so
+   * the question has to come from the fieldset around them.
+   */
+  function groupLabelFor(radio) {
+    const bits = [];
+    const fieldset = radio.closest("fieldset");
+    if (fieldset) {
+      const legend = fieldset.querySelector("legend");
+      if (legend) bits.push(legend.textContent);
+    }
+    const group = radio.closest('[role="radiogroup"], [role="group"]');
+    if (group) {
+      const by = group.getAttribute("aria-labelledby");
+      if (by) {
+        for (const id of by.split(/\s+/)) {
+          const node = document.getElementById(id);
+          if (node) bits.push(node.textContent);
+        }
+      }
+      bits.push(group.getAttribute("aria-label"));
+    }
+    bits.push(radio.name);
+    return bits.filter(Boolean).join(" ");
+  }
+
+  /** The visible answer text beside one radio button. */
+  function radioAnswer(radio) {
+    if (radio.id) {
+      const tag = document.querySelector(`label[for="${CSS.escape(radio.id)}"]`);
+      if (tag) return tag.textContent.trim();
+    }
+    const wrapping = radio.closest("label");
+    if (wrapping) return wrapping.textContent.trim();
+    return (radio.getAttribute("aria-label") || radio.value || "").trim();
+  }
+
+  /**
+   * Radio groups we will answer.
+   *
+   * Everything else a form asks with radio buttons is a decision —
+   * sponsorship, eligibility, consent — and those stay yours. Gender is
+   * here only because you set the answer yourself in the options.
+   */
+  const RADIO_OK = new Set(["gender"]);
 
   /**
    * Puts a real file into a file input.
@@ -116,10 +215,19 @@
 
     const inputs = [...document.querySelectorAll("input, select, textarea")];
 
+    const radioGroups = new Map();
+
     for (const el of inputs) {
       if (el.type === "file") continue; // handled separately
+
+      if (el.type === "radio") {
+        const key = el.name || groupLabelFor(el);
+        if (!radioGroups.has(key)) radioGroups.set(key, []);
+        radioGroups.get(key).push(el);
+        continue;
+      }
       // A tick box is a decision, not a detail. Never answer one for you.
-      if (el.type === "checkbox" || el.type === "radio") continue;
+      if (el.type === "checkbox") continue;
 
       const label = labelFor(el);
       const kind = F.classify(label);
@@ -145,11 +253,49 @@
 
       if (el instanceof HTMLSelectElement) {
         if (selectOption(el, value)) report.filled.push(kind);
-        else report.skipped.push(`${kind} (no matching option)`);
+        else report.skipped.push(`${kind} (no option matching "${value}")`);
+        continue;
+      }
+
+      if (isCustomDropdown(el)) {
+        if (await pickFromListbox(el, value)) report.filled.push(kind);
+        else report.skipped.push(`${kind} (dropdown had no "${value}")`);
         continue;
       }
 
       setValue(el, value);
+      report.filled.push(kind);
+    }
+
+    // Radio groups, once the text fields are done.
+    for (const [key, radios] of radioGroups) {
+      const kind = F.classify(groupLabelFor(radios[0]) || key);
+
+      if (!kind || !RADIO_OK.has(kind)) {
+        report.skipped.push(`${kind || "a choice"} (yours to answer)`);
+        continue;
+      }
+      if (radios.some((r) => r.checked)) {
+        report.skipped.push(`${kind} (already answered)`);
+        continue;
+      }
+
+      const value = F.valueFor(kind, profile);
+      if (!value) {
+        report.skipped.push(`${kind} (not set in extension options)`);
+        continue;
+      }
+
+      const want = value.trim().toLowerCase();
+      const pick =
+        radios.find((r) => radioAnswer(r).toLowerCase() === want) ||
+        radios.find((r) => radioAnswer(r).toLowerCase().startsWith(want));
+
+      if (!pick) {
+        report.skipped.push(`${kind} (no choice matching "${value}")`);
+        continue;
+      }
+      pick.click();
       report.filled.push(kind);
     }
 

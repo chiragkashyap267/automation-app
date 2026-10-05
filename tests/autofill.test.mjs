@@ -49,6 +49,31 @@ check("resume", classify("Resume/CV"), "resume");
 check("experience in years", classify("Total Years of Experience"), "experience");
 check("a Workday id works too", classify("legalNameSection_firstName"), "firstName");
 
+section("the questions every form asks that the app does not store");
+check("country", classify("Country"), "country");
+check("country of residence", classify("Country of Residence"), "country");
+check("gender", classify("Gender"), "gender");
+check("sex", classify("Sex"), "gender");
+// A different question entirely, and not one to answer from a setting.
+check("sexual orientation is not gender", classify("Sexual Orientation"), null);
+check("nationality", classify("Nationality"), "nationality");
+check("citizenship", classify("Citizenship"), "nationality");
+
+section("those answers come from the extension's own options");
+const withExtras = {
+  location: "Noida, Uttar Pradesh",
+  country: "India",
+  gender: "Male",
+  nationality: "Indian",
+};
+check("country is what you set", valueFor("country", withExtras), "India");
+check("gender is what you set", valueFor("gender", withExtras), "Male");
+check("nationality is what you set", valueFor("nationality", withExtras), "Indian");
+// Unset gender must leave the radio group alone, not guess at it.
+check("unset gender fills nothing", valueFor("gender", { location: "Noida" }), null);
+check("country is worked out when unset", valueFor("country", { location: "Noida, Uttar Pradesh" }), "India");
+check("a non-Indian address is not called India", valueFor("country", { location: "Berlin, Germany" }), null);
+
 section("what it refuses to answer for you");
 // Salary and notice period cannot be un-said once submitted.
 check("expected salary is recognised", classify("Expected CTC"), "expectedCtc");
