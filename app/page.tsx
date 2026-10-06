@@ -159,8 +159,8 @@ export default function HomePage() {
    */
   const acceptShare = useCallback(
     async (incoming: Share) => {
-      if (incoming.kind === "linkedin-job") {
-        setShareNote("Reading the LinkedIn job…");
+      if (incoming.kind === "linkedin") {
+        setShareNote("Reading that LinkedIn link…");
         try {
           const res = await fetch("/api/linkedin", {
             method: "POST",
@@ -168,16 +168,16 @@ export default function HomePage() {
             body: JSON.stringify({ url: incoming.url }),
           });
           const body = (await res.json()) as { text?: string; emails?: string[]; error?: string };
-          if (!res.ok || !body.text) throw new Error(body.error || "Could not read that job.");
+          if (!res.ok || !body.text) throw new Error(body.error || "Could not read that link.");
 
           addText(body.text);
           setShareNote(
             body.emails?.length
               ? "Read from LinkedIn. There is an address in it, so this can be sent as an email."
-              : "Read from LinkedIn. No email in the posting, so this one applies through LinkedIn itself.",
+              : "Read from LinkedIn, but there is no email address in it, so there is nobody to write to.",
           );
         } catch (err) {
-          setShareNote(err instanceof Error ? err.message : "Could not read that job.");
+          setShareNote(err instanceof Error ? err.message : "Could not read that link.");
         }
         return;
       }

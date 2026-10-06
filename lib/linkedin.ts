@@ -22,8 +22,17 @@ const JOB_URL =
 /** LinkedIn's own shortener, which has to be followed before anything else. */
 const SHORT_URL = /(?:^|\/\/)(?:lnkd\.in|linkedin\.com\/slink)\/\S+/i;
 
-/** A feed post, which really is gated. Worth telling them apart. */
+/**
+ * A feed post — the "we are hiring, send your CV to…" kind.
+ *
+ * Also readable, through the endpoint LinkedIn provides so posts can be
+ * embedded in other people's web pages. The activity id is already in the
+ * URL the share sheet produces, which is the whole trick.
+ */
 const FEED_URL = /linkedin\.com\/(?:posts|feed|pulse)\//i;
+
+/** "…-activity-7131590082221752320-9C4_" or "urn:li:activity:7131…". */
+const ACTIVITY_ID = /(?:activity[-:]|ugcPost[-:]|share[-:])(\d{15,})/i;
 
 export type LinkedInJob = {
   id: string;
@@ -45,8 +54,18 @@ export function isShortLink(url: string): boolean {
   return SHORT_URL.test(url ?? "");
 }
 
+export function linkedInActivityId(url: string): string | null {
+  if (linkedInJobId(url ?? "")) return null; // a job, not a post
+  return ACTIVITY_ID.exec(url ?? "")?.[1] ?? null;
+}
+
 export function isFeedPost(url: string): boolean {
   return FEED_URL.test(url ?? "") && !linkedInJobId(url ?? "");
+}
+
+/** Any LinkedIn link this can do something with. */
+export function isReadableLinkedIn(url: string): boolean {
+  return Boolean(linkedInJobId(url) || linkedInActivityId(url) || isShortLink(url));
 }
 
 /** Strips tags and collapses the whitespace LinkedIn leaves everywhere. */
@@ -138,6 +157,54 @@ export function asPostingText(job: LinkedInJob): string {
     .trim();
 }
 
+/** One `<meta property="og:x" content="…">` value. */
+export function ogTag(html: string, property: string): string {
+  const pattern = new RegExp(
+    `<meta[^>]*(?:property|name)="${property}"[^>]*content="([^"]*)"`,
+    "i",
+  );
+  const found = pattern.exec(html)?.[1];
+  return found ? toPlainText(found) : "";
+}
+
+/**
+ * Everything useful out of one embedded post.
+ *
+ * The embed has no element naming the author, but og:title spells it
+ * "First line of the post | Author Name | 37 comments", so the author is
+ * the middle of three.
+ */
+export function parseEmbeddedPost(html: string, id: string, url: string): LinkedInPost | null {
+  const body = extractByClass(html, "attributed-text-segment-list__content");
+  const text = body === null ? "" : toPlainText(body);
+  if (!text) return null;
+
+  const parts = ogTag(html, "og:title")
+    .split("|")
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const author =
+    parts.length >= 2
+      ? // Some posts read "Aya Waled posted on the topic …"; the name is
+        // what comes before that, not the whole sentence.
+        parts[parts.length - 2].replace(/\s+(posted|shared|commented)\b.*$/i, "").trim()
+      : "";
+
+  const emails = [...new Set(text.match(/[\w.+-]+@[\w-]+\.[\w.]{2,}/g) ?? [])].filter(
+    (e) => !/linkedin\.com$/i.test(e),
+  );
+
+  return { id, author, text, emails, url };
+}
+
+export type LinkedInPost = {
+  id: string;
+  author: string;
+  text: string;
+  emails: string[];
+  url: string;
+};
+
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36";
 
@@ -153,6 +220,66 @@ async function resolve(url: string): Promise<string> {
   } catch {
     return url;
   }
+}
+
+/**
+ * A feed post, through LinkedIn's own embed endpoint.
+ *
+ * That endpoint exists so a post can be shown on someone else's website,
+ * which means it has to work for a reader who is not signed in. Same
+ * reasoning as the job listing: public by design, no account involved.
+ */
+export async function fetchLinkedInPost(rawUrl: string): Promise<LinkedInPost | null> {
+  let url = (rawUrl ?? "").trim();
+  if (isShortLink(url)) url = await resolve(url);
+
+  const id = linkedInActivityId(url);
+  if (!id) return null;
+
+  try {
+    const res = await fetch(
+      `https://www.linkedin.com/embed/feed/update/urn:li:activity:${id}`,
+      { headers: { "user-agent": UA, accept: "text/html" }, signal: AbortSignal.timeout(15_000) },
+    );
+    if (!res.ok) return null;
+    return parseEmbeddedPost(await res.text(), id, url);
+  } catch {
+    return null;
+  }
+}
+
+/** What a shared LinkedIn link turned out to be. */
+export type LinkedInContent =
+  | { kind: "job"; job: LinkedInJob }
+  | { kind: "post"; post: LinkedInPost };
+
+/**
+ * Reads whatever kind of LinkedIn link was shared.
+ *
+ * A short link could be either, so it is resolved once here and the real
+ * URL decides, rather than each caller guessing.
+ */
+export async function readLinkedIn(rawUrl: string): Promise<LinkedInContent | null> {
+  let url = (rawUrl ?? "").trim();
+  if (isShortLink(url)) url = await resolve(url);
+
+  if (linkedInJobId(url)) {
+    const job = await fetchLinkedInJob(url);
+    return job ? { kind: "job", job } : null;
+  }
+  if (linkedInActivityId(url)) {
+    const post = await fetchLinkedInPost(url);
+    return post ? { kind: "post", post } : null;
+  }
+  return null;
+}
+
+/** The post, shaped the way a pasted job description would arrive. */
+export function postAsText(post: LinkedInPost): string {
+  return [post.author ? `Posted by ${post.author} on LinkedIn` : "", "", post.text]
+    .filter((line) => line !== "")
+    .join("\n")
+    .trim();
 }
 
 /** Null when the link is not a readable job, for any reason. */

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { guard } from "@/lib/auth";
-import { asPostingText, fetchLinkedInJob, linkedInJobId, isShortLink } from "@/lib/linkedin";
+import { asPostingText, isReadableLinkedIn, postAsText, readLinkedIn } from "@/lib/linkedin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -28,23 +28,37 @@ export async function POST(request: Request) {
   }
 
   const url = (body.url ?? "").trim();
-  if (!url || (!linkedInJobId(url) && !isShortLink(url))) {
-    return NextResponse.json({ error: "That is not a LinkedIn job link." }, { status: 400 });
+  if (!url || !isReadableLinkedIn(url)) {
+    return NextResponse.json({ error: "That is not a LinkedIn link I can read." }, { status: 400 });
   }
 
-  const job = await fetchLinkedInJob(url);
-  if (!job) {
+  const found = await readLinkedIn(url);
+  if (!found) {
     return NextResponse.json(
-      { error: "That job could not be read — it may have been taken down." },
+      { error: "That could not be read — it may have been taken down, or be visible only to people signed in." },
       { status: 404 },
     );
   }
 
+  if (found.kind === "job") {
+    const { job } = found;
+    return NextResponse.json({
+      kind: "job",
+      text: asPostingText(job),
+      title: job.title,
+      company: job.company,
+      location: job.location,
+      emails: job.emails,
+    });
+  }
+
+  const { post } = found;
   return NextResponse.json({
-    text: asPostingText(job),
-    title: job.title,
-    company: job.company,
-    location: job.location,
-    emails: job.emails,
+    kind: "post",
+    text: postAsText(post),
+    title: post.author ? `Post by ${post.author}` : "LinkedIn post",
+    company: post.author,
+    location: "",
+    emails: post.emails,
   });
 }

@@ -18,14 +18,16 @@ check("and comes back whole", classifyShare(POST).text, POST);
 check("title and text are joined", classifyShare("Frontend Developer", POST).kind, "usable");
 check("blank parts are dropped", classifyShare("", null, POST).text, POST);
 
-section("a share that is only a link");
-// LinkedIn hands over the URL, and that page needs a login to read.
-check("a bare linkedin post", classifyShare("https://www.linkedin.com/posts/someone_activity-7123").kind, "link-only");
-// A job listing is the exception: LinkedIn serves those to everyone, so it
-// is routed to the reader instead of refused. See tests/linkedin.test.mjs.
-check("a job listing link is readable", classifyShare("https://www.linkedin.com/jobs/view/4012345678").kind, "linkedin-job");
+section("LinkedIn links, which are worth following");
+// Both kinds are served to people who are not signed in, so both are sent
+// to the reader rather than refused. See tests/linkedin.test.mjs.
+check("a feed post", classifyShare("https://www.linkedin.com/posts/someone_activity-7123456789012345678").kind, "linkedin");
+check("a job listing", classifyShare("https://www.linkedin.com/jobs/view/4012345678").kind, "linkedin");
+
+section("links that really are dead ends");
 check("a link with a word in front", classifyShare("Hiring https://example.com/jobs/1").kind, "link-only");
 check("a link given as the url part", classifyShare("", "", "https://example.com/j/1").kind, "link-only");
+check("a LinkedIn profile is not a posting", classifyShare("https://www.linkedin.com/in/someone").kind, "link-only");
 
 section("a share too thin to write from");
 check("a title on its own", classifyShare("Frontend Developer").kind, "link-only");

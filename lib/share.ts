@@ -13,12 +13,12 @@
  * accepted thin one is visible on screen before anything is sent.
  */
 
-import { isShortLink, linkedInJobId } from "./linkedin";
+import { isReadableLinkedIn } from "./linkedin";
 
 export type Share =
   | { kind: "usable"; text: string }
-  /** A LinkedIn job link, which can be read: see lib/linkedin.ts. */
-  | { kind: "linkedin-job"; url: string }
+  /** A LinkedIn job or feed post: both readable, see lib/linkedin.ts. */
+  | { kind: "linkedin"; url: string }
   | { kind: "link-only" }
   | { kind: "empty" };
 
@@ -37,12 +37,10 @@ export function classifyShare(...parts: (string | null | undefined)[]): Share {
 
   if (!text) return { kind: "empty" };
 
-  // Checked before the bare-link test, because this is the one link that
-  // is worth something: LinkedIn serves job listings to everyone.
+  // Checked before the bare-link test. LinkedIn links are the ones worth
+  // following: job listings and feed posts are both served to everyone.
   const link = /https?:\/\/\S+/.exec(text)?.[0];
-  if (link && (linkedInJobId(link) || isShortLink(link))) {
-    return { kind: "linkedin-job", url: link };
-  }
+  if (link && isReadableLinkedIn(link)) return { kind: "linkedin", url: link };
 
   if (BARE_LINK.test(text)) return { kind: "link-only" };
 

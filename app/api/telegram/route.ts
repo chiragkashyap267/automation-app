@@ -54,10 +54,9 @@ import {
 import { digestHeader, jobCard, jobKeyboard, markSeen, runWatch } from "@/lib/jobs/watch";
 import {
   asPostingText,
-  fetchLinkedInJob,
-  isFeedPost,
-  isShortLink,
-  linkedInJobId,
+  isReadableLinkedIn,
+  postAsText,
+  readLinkedIn,
 } from "@/lib/linkedin";
 import { composeEmail, normalizePlainText } from "@/lib/signature";
 import { EMPTY_PROFILE, type Profile } from "@/lib/types";
@@ -837,44 +836,42 @@ async function handleMessage(message: TgMessage) {
   if (!message.photo?.length && BARE_URL.test(text)) {
     const link = text.trim();
 
-    // A LinkedIn *job* is public: LinkedIn wants it in search results, so
-    // it serves the whole posting to anyone who is not logged in. A feed
-    // post genuinely is gated, which is a different answer.
-    if (linkedInJobId(link) || isShortLink(link)) {
+    // Both kinds of LinkedIn link are public: a job listing because
+    // LinkedIn wants it in search results, a feed post because it is
+    // served to anyone embedding it on their own site.
+    if (isReadableLinkedIn(link)) {
       await tg("sendChatAction", { chat_id: chatId, action: "typing" });
-      const job = await fetchLinkedInJob(link);
+      const found = await readLinkedIn(link);
 
-      if (job) {
-        if (!job.emails.length) {
-          await say(
-            chatId,
-            [
-              `${job.title}${job.company ? ` at ${job.company}` : ""}`,
-              job.location,
-              "",
-              "This one has no email in it, so there is nobody to write to — it only takes applications through LinkedIn itself.",
-              "",
-              link,
-            ]
-              .filter(Boolean)
-              .join(NL),
-          );
-          return;
-        }
-        text = asPostingText(job);
-      } else {
+      if (!found) {
         await say(
           chatId,
-          "I could not read that LinkedIn job — it may have been taken down. Send a screenshot instead.",
+          "I could not read that LinkedIn link — it may have been taken down, or be visible only to people signed in. Send a screenshot instead.",
         );
         return;
       }
-    } else if (isFeedPost(link)) {
-      await say(
-        chatId,
-        "That is a LinkedIn post rather than a job listing, and posts are hidden from anyone not logged in.\n\nScreenshot it and send me the image — that works well.",
-      );
-      return;
+
+      const emails = found.kind === "job" ? found.job.emails : found.post.emails;
+
+      if (!emails.length) {
+        const headline =
+          found.kind === "job"
+            ? [
+                `${found.job.title}${found.job.company ? ` at ${found.job.company}` : ""}`,
+                found.job.location,
+                "",
+                "There is no email in this one, so there is nobody to write to — it only takes applications through LinkedIn itself.",
+              ]
+            : [
+                found.post.author ? `Post by ${found.post.author}` : "LinkedIn post",
+                "",
+                "I read it, but there is no email address in it, so there is nobody to write to. Reply or message them on LinkedIn instead.",
+              ];
+        await say(chatId, [...headline, "", link].filter(Boolean).join(NL));
+        return;
+      }
+
+      text = found.kind === "job" ? asPostingText(found.job) : postAsText(found.post);
     } else {
       await say(
         chatId,
