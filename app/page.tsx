@@ -7,7 +7,7 @@ import PasswordGate from "@/components/PasswordGate";
 import PasteZone from "@/components/PasteZone";
 import SourceList from "@/components/SourceList";
 import { prepareImage } from "@/lib/image";
-import { classifyShare, LINK_ONLY_NOTE } from "@/lib/share";
+import { classifyShare, LINK_ONLY_NOTE, type Share } from "@/lib/share";
 import { learnFromSend, newId, processGroup, rewriteDraft, type RunMode } from "@/lib/pipeline";
 import { recordSent } from "@/lib/history";
 import { editRatio, loadRecipes } from "@/lib/recipes";
@@ -109,40 +109,6 @@ export default function HomePage() {
     saveDrafts(drafts);
   }, [drafts]);
 
-  // Arriving from another app's share sheet: Android puts the shared post in
-  // the query string. Pick it up once, then clean the URL so a refresh does
-  // not add it twice.
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const title = params.get("share_title") ?? "";
-    const text = params.get("share_text") ?? "";
-    const url = params.get("share_url") ?? "";
-    if (!title && !text && !url) return;
-
-    window.history.replaceState({}, "", window.location.pathname);
-
-    const incoming = classifyShare(title, text, url);
-    if (incoming.kind !== "usable") {
-      setShareNote(LINK_ONLY_NOTE);
-      return;
-    }
-
-    // setItems directly rather than addText, so this effect does not depend on
-    // a callback declared further down.
-    setItems((prev) => [
-      ...prev,
-      {
-        id: newId(),
-        kind: "text",
-        data: "",
-        mediaType: "",
-        text: incoming.text,
-        preview: "",
-        groupId: newId(),
-      },
-    ]);
-    setShareNote("Added from share. Check it looks complete, then write the email.");
-  }, []);
 
   const pickRunMode = useCallback((value: RunMode) => {
     setRunMode(value);
@@ -185,6 +151,60 @@ export default function HomePage() {
       { id: newId(), kind: "text", data: "", mediaType: "", text, preview: "", groupId: newId() },
     ]);
   }, []);
+
+  /**
+   * Everything that arrives from another app's share sheet, however it
+   * got here. A LinkedIn job link is fetched and turned into the posting
+   * behind it; anything else is either text worth reading or a dead end.
+   */
+  const acceptShare = useCallback(
+    async (incoming: Share) => {
+      if (incoming.kind === "linkedin-job") {
+        setShareNote("Reading the LinkedIn job…");
+        try {
+          const res = await fetch("/api/linkedin", {
+            method: "POST",
+            headers: authHeaders({ "content-type": "application/json" }),
+            body: JSON.stringify({ url: incoming.url }),
+          });
+          const body = (await res.json()) as { text?: string; emails?: string[]; error?: string };
+          if (!res.ok || !body.text) throw new Error(body.error || "Could not read that job.");
+
+          addText(body.text);
+          setShareNote(
+            body.emails?.length
+              ? "Read from LinkedIn. There is an address in it, so this can be sent as an email."
+              : "Read from LinkedIn. No email in the posting, so this one applies through LinkedIn itself.",
+          );
+        } catch (err) {
+          setShareNote(err instanceof Error ? err.message : "Could not read that job.");
+        }
+        return;
+      }
+
+      if (incoming.kind !== "usable") {
+        setShareNote(LINK_ONLY_NOTE);
+        return;
+      }
+
+      addText(incoming.text);
+      setShareNote("Added from share. Check it looks complete, then write the email.");
+    },
+    [addText],
+  );
+
+  // An older install still shares with a GET, which puts everything in the
+  // query string. Kept until Android refreshes the installed app.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const title = params.get("share_title") ?? "";
+    const text = params.get("share_text") ?? "";
+    const url = params.get("share_url") ?? "";
+    if (!title && !text && !url) return;
+
+    window.history.replaceState({}, "", window.location.pathname);
+    void acceptShare(classifyShare(title, text, url));
+  }, [acceptShare]);
 
   // Arriving from the share sheet with files attached. The service worker
   // took the POST and parked it, because a page cannot read a POST body it
@@ -242,18 +262,10 @@ export default function HomePage() {
         return;
       }
 
-      // No file, so this was a text or link share. A bare LinkedIn link has
-      // nothing readable behind it for anyone who is not logged in.
-      const incoming = classifyShare(text);
-      if (incoming.kind !== "usable") {
-        setShareNote(LINK_ONLY_NOTE);
-        return;
-      }
-
-      addText(incoming.text);
-      setShareNote("Added from share. Check it looks complete, then write the email.");
+      // No file, so this was text or a link.
+      await acceptShare(classifyShare(text));
     })();
-  }, [addImages, addText]);
+  }, [addImages, acceptShare]);
 
   const mergeUp = useCallback((id: string) => {
     setItems((prev) => {

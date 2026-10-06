@@ -52,6 +52,13 @@ import {
   schedulingAvailable,
 } from "@/lib/schedule";
 import { digestHeader, jobCard, jobKeyboard, markSeen, runWatch } from "@/lib/jobs/watch";
+import {
+  asPostingText,
+  fetchLinkedInJob,
+  isFeedPost,
+  isShortLink,
+  linkedInJobId,
+} from "@/lib/linkedin";
 import { composeEmail, normalizePlainText } from "@/lib/signature";
 import { EMPTY_PROFILE, type Profile } from "@/lib/types";
 
@@ -785,7 +792,8 @@ async function handleAsk(chatId: number, ask: { email: string; role: string }) {
 async function handleMessage(message: TgMessage) {
   const chatId = message.chat.id;
 
-  const text = (message.text ?? message.caption ?? "").trim();
+  // Not const: a LinkedIn job link is replaced by the posting behind it.
+  let text = (message.text ?? message.caption ?? "").trim();
   if (/^\/(start|help)\b/.test(text)) {
     await say(chatId, HELP);
     return;
@@ -827,13 +835,53 @@ async function handleMessage(message: TgMessage) {
   // is no posting text and no address behind the link — say so rather than
   // feeding a URL to the model and returning nonsense.
   if (!message.photo?.length && BARE_URL.test(text)) {
-    await say(
-      chatId,
-      /linkedin\.com|nkd\.in|lnkd\.in/i.test(text)
-        ? "I cannot read a LinkedIn link — the page hides the job text and the contact address from anyone not logged in.\n\nScreenshot the posting and send me the image instead. That works well."
-        : "That is just a link, and I cannot open pages. Send a screenshot of the posting, or paste the text.",
-    );
-    return;
+    const link = text.trim();
+
+    // A LinkedIn *job* is public: LinkedIn wants it in search results, so
+    // it serves the whole posting to anyone who is not logged in. A feed
+    // post genuinely is gated, which is a different answer.
+    if (linkedInJobId(link) || isShortLink(link)) {
+      await tg("sendChatAction", { chat_id: chatId, action: "typing" });
+      const job = await fetchLinkedInJob(link);
+
+      if (job) {
+        if (!job.emails.length) {
+          await say(
+            chatId,
+            [
+              `${job.title}${job.company ? ` at ${job.company}` : ""}`,
+              job.location,
+              "",
+              "This one has no email in it, so there is nobody to write to — it only takes applications through LinkedIn itself.",
+              "",
+              link,
+            ]
+              .filter(Boolean)
+              .join(NL),
+          );
+          return;
+        }
+        text = asPostingText(job);
+      } else {
+        await say(
+          chatId,
+          "I could not read that LinkedIn job — it may have been taken down. Send a screenshot instead.",
+        );
+        return;
+      }
+    } else if (isFeedPost(link)) {
+      await say(
+        chatId,
+        "That is a LinkedIn post rather than a job listing, and posts are hidden from anyone not logged in.\n\nScreenshot it and send me the image — that works well.",
+      );
+      return;
+    } else {
+      await say(
+        chatId,
+        "That is just a link, and I cannot open pages. Send a screenshot of the posting, or paste the text.",
+      );
+      return;
+    }
   }
 
   // A cold enquiry has no posting to read, so it skips the extract step

@@ -21,7 +21,9 @@ check("blank parts are dropped", classifyShare("", null, POST).text, POST);
 section("a share that is only a link");
 // LinkedIn hands over the URL, and that page needs a login to read.
 check("a bare linkedin post", classifyShare("https://www.linkedin.com/posts/someone_activity-7123").kind, "link-only");
-check("a job listing link", classifyShare("https://www.linkedin.com/jobs/view/4012345678").kind, "link-only");
+// A job listing is the exception: LinkedIn serves those to everyone, so it
+// is routed to the reader instead of refused. See tests/linkedin.test.mjs.
+check("a job listing link is readable", classifyShare("https://www.linkedin.com/jobs/view/4012345678").kind, "linkedin-job");
 check("a link with a word in front", classifyShare("Hiring https://example.com/jobs/1").kind, "link-only");
 check("a link given as the url part", classifyShare("", "", "https://example.com/j/1").kind, "link-only");
 
