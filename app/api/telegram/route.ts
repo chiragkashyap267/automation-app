@@ -844,9 +844,14 @@ async function handleMessage(message: TgMessage) {
       const found = await readLinkedIn(link);
 
       if (!found) {
+        console.error("[linkedin] could not read", link);
         await say(
           chatId,
-          "I could not read that LinkedIn link — it may have been taken down, or be visible only to people signed in. Send a screenshot instead.",
+          [
+            "I could not read that one. Usually it is a post with no text of its own — a shared image, a video, or a repost with nothing written above it.",
+            "",
+            "Screenshot it and send me the image; that reads the words off the picture and works on anything.",
+          ].join(NL),
         );
         return;
       }

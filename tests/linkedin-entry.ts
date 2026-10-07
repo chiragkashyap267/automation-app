@@ -1,5 +1,6 @@
 export {
   asPostingText,
+  authorFromOgTitle,
   extractByClass,
   isFeedPost,
   isReadableLinkedIn,
@@ -9,6 +10,7 @@ export {
   ogTag,
   parseEmbeddedPost,
   parseGuestJob,
+  parseOgPost,
   postAsText,
   toPlainText,
 } from "../lib/linkedin";

@@ -168,33 +168,67 @@ export function ogTag(html: string, property: string): string {
 }
 
 /**
- * Everything useful out of one embedded post.
+ * Who posted it, out of an og:title.
  *
- * The embed has no element naming the author, but og:title spells it
- * "First line of the post | Author Name | 37 comments", so the author is
- * the middle of three.
+ * Both pages that carry a post spell the title the same way but with a
+ * different tail: the embed adds "| 37 comments", the canonical page does
+ * not. Dropping the comment count first makes the author the last part in
+ * either case.
  */
+export function authorFromOgTitle(title: string): string {
+  const parts = title
+    .split("|")
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .filter((p) => !/^\d+\s+(comments?|likes?|reactions?)$/i.test(p));
+
+  if (parts.length < 2) return "";
+  // Some read "Aya Waled posted on the topic of hiring"; the name is what
+  // comes before that, not the whole sentence.
+  return parts[parts.length - 1].replace(/\s+(posted|shared|commented)\b.*$/i, "").trim();
+}
+
+/** Addresses in a post, minus LinkedIn's own. */
+function addressesIn(text: string): string[] {
+  return [...new Set(text.match(/[\w.+-]+@[\w-]+\.[\w.]{2,}/g) ?? [])].filter(
+    (e) => !/linkedin\.com$/i.test(e),
+  );
+}
+
+/** Everything useful out of one embedded post. */
 export function parseEmbeddedPost(html: string, id: string, url: string): LinkedInPost | null {
   const body = extractByClass(html, "attributed-text-segment-list__content");
   const text = body === null ? "" : toPlainText(body);
   if (!text) return null;
 
-  const parts = ogTag(html, "og:title")
-    .split("|")
-    .map((p) => p.trim())
-    .filter(Boolean);
-  const author =
-    parts.length >= 2
-      ? // Some posts read "Aya Waled posted on the topic …"; the name is
-        // what comes before that, not the whole sentence.
-        parts[parts.length - 2].replace(/\s+(posted|shared|commented)\b.*$/i, "").trim()
-      : "";
+  return {
+    id,
+    author: authorFromOgTitle(ogTag(html, "og:title")),
+    text,
+    emails: addressesIn(text),
+    url,
+  };
+}
 
-  const emails = [...new Set(text.match(/[\w.+-]+@[\w-]+\.[\w.]{2,}/g) ?? [])].filter(
-    (e) => !/linkedin\.com$/i.test(e),
-  );
+/**
+ * The same post read from its ordinary page instead of the embed.
+ *
+ * A fallback, for when the embed will not render — an image-only post, a
+ * layout change, or LinkedIn simply refusing the request. The page's
+ * og:description carries the post text, which is usually everything that
+ * matters, including the address to write to.
+ */
+export function parseOgPost(html: string, id: string, url: string): LinkedInPost | null {
+  const text = ogTag(html, "og:description");
+  if (!text) return null;
 
-  return { id, author, text, emails, url };
+  return {
+    id,
+    author: authorFromOgTitle(ogTag(html, "og:title")),
+    text,
+    emails: addressesIn(text),
+    url,
+  };
 }
 
 export type LinkedInPost = {
@@ -229,6 +263,28 @@ async function resolve(url: string): Promise<string> {
  * which means it has to work for a reader who is not signed in. Same
  * reasoning as the job listing: public by design, no account involved.
  */
+async function getHtml(target: string): Promise<string | null> {
+  try {
+    const res = await fetch(target, {
+      headers: { "user-agent": UA, accept: "text/html" },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) return null;
+    return await res.text();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The URN a post id lives under.
+ *
+ * Most are activities. A few — reposts, and some company output — are
+ * filed as a ugcPost or a share, and the embed 404s under the wrong one.
+ * Cheap enough to try in turn rather than guess from the URL.
+ */
+const URN_TYPES = ["activity", "ugcPost", "share"] as const;
+
 export async function fetchLinkedInPost(rawUrl: string): Promise<LinkedInPost | null> {
   let url = (rawUrl ?? "").trim();
   if (isShortLink(url)) url = await resolve(url);
@@ -236,16 +292,19 @@ export async function fetchLinkedInPost(rawUrl: string): Promise<LinkedInPost | 
   const id = linkedInActivityId(url);
   if (!id) return null;
 
-  try {
-    const res = await fetch(
-      `https://www.linkedin.com/embed/feed/update/urn:li:activity:${id}`,
-      { headers: { "user-agent": UA, accept: "text/html" }, signal: AbortSignal.timeout(15_000) },
-    );
-    if (!res.ok) return null;
-    return parseEmbeddedPost(await res.text(), id, url);
-  } catch {
-    return null;
+  for (const urn of URN_TYPES) {
+    const html = await getHtml(`https://www.linkedin.com/embed/feed/update/urn:li:${urn}:${id}`);
+    if (!html) continue;
+    const post = parseEmbeddedPost(html, id, url);
+    if (post) return post;
   }
+
+  // The embed would not render it. The ordinary page still describes it.
+  const page =
+    (await getHtml(`https://www.linkedin.com/feed/update/urn:li:activity:${id}`)) ??
+    (await getHtml(url));
+
+  return page ? parseOgPost(page, id, url) : null;
 }
 
 /** What a shared LinkedIn link turned out to be. */

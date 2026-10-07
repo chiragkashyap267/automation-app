@@ -1,6 +1,7 @@
 // Reading a LinkedIn job link, which turns out to be public after all.
 const { linkedInJobId, linkedInActivityId, isShortLink, isFeedPost, isReadableLinkedIn, toPlainText,
-  extractByClass, ogTag, parseGuestJob, parseEmbeddedPost, asPostingText, postAsText, classifyShare } =
+  extractByClass, ogTag, parseGuestJob, parseEmbeddedPost, parseOgPost, authorFromOgTitle,
+  asPostingText, postAsText, classifyShare } =
   await import("./.linkedin.bundle.mjs");
 
 let pass = 0, fail = 0;
@@ -58,6 +59,28 @@ check("and the address to write to", post.emails, ["hr@acme.in"]);
 // Some posts read "Aya Waled posted on the topic of hiring".
 check("a wordy og:title still gives a name", parseEmbeddedPost('<meta property="og:title" content="x | Aya Waled posted on the topic | 3 comments" /><p class="attributed-text-segment-list__content">hi</p>', "1", "u").author, "Aya Waled");
 check("a post with no text at all reads as nothing", parseEmbeddedPost('<meta property="og:title" content="a | b | c" />', "1", "u"), null);
+
+section("the author, from either page's og:title");
+// The embed adds a comment count; the ordinary page does not. Dropping the
+// count first makes the author the last part in both cases.
+check("the embed shape", authorFromOgTitle("We are hiring | Priya Nair | 12 comments"), "Priya Nair");
+check("the ordinary page shape", authorFromOgTitle("We are hiring at Kolte | Girish Kolte"), "Girish Kolte");
+check("likes are dropped too", authorFromOgTitle("x | Girish Kolte | 40 likes"), "Girish Kolte");
+check("a wordy one keeps just the name", authorFromOgTitle("x | Aya Waled posted on the topic | 3 comments"), "Aya Waled");
+check("nothing to split gives nothing", authorFromOgTitle("Just a title"), "");
+check("empty gives nothing", authorFromOgTitle(""), "");
+
+section("falling back to the ordinary page when the embed will not render");
+// Verified against a real post: og:description carries the whole thing,
+// address included, even where the embed returns nothing usable.
+const ogPage = `
+  <meta property="og:title" content="We are hiring at KolteTechnologies | Girish Kolte" />
+  <meta property="og:description" content="We are hiring at KolteTechnologies. Share your resume at hr.kolte@gmail.com" />`;
+const fallback = parseOgPost(ogPage, "7488461877862330369", "https://www.linkedin.com/posts/x");
+check("the text comes from og:description", fallback.text.includes("Share your resume"), true);
+check("the author still comes out", fallback.author, "Girish Kolte");
+check("and so does the address", fallback.emails, ["hr.kolte@gmail.com"]);
+check("a page with no description reads as nothing", parseOgPost('<meta property="og:title" content="a | b" />', "1", "u"), null);
 
 section("the og tag reader");
 check("finds a property", ogTag('<meta property="og:title" content="Hello" />', "og:title"), "Hello");
