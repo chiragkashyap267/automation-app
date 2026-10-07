@@ -1,4 +1,5 @@
 import { describeResumeChoice, pickResumeUrl, resumeFileNameFor } from "./resume";
+import { loadSharedResume } from "./sharedResume";
 
 /**
  * Downloading the resume that goes with an application.
@@ -59,6 +60,31 @@ export function resumeNameFor(fullName: string, role: string): string {
  * and the role, because "resume.pdf" is unfindable in a recruiter's folder.
  */
 export async function fetchResume(role = "", fullName = ""): Promise<ResumeResult | null> {
+  // A role-specific RESUME_URL_<KEYWORD> is a deliberate choice for this
+  // kind of application, so it outranks everything. Otherwise the file
+  // uploaded in the web app wins: it is the one that was changed most
+  // recently, and by hand.
+  if (!describeResumeChoice(role)) {
+    const uploaded = await loadSharedResume();
+    if (uploaded) {
+      // Keyed on savedAt, so uploading a new one is picked up at once
+      // rather than after this warm instance happens to be recycled.
+      const key = `uploaded:${uploaded.savedAt}`;
+      const held = resumeCache.get(key);
+      if (held?.ok) {
+        return { ok: true, attachment: { ...held.attachment, filename: resumeNameFor(fullName, role) } };
+      }
+      return cache(key, {
+        ok: true,
+        attachment: {
+          filename: resumeNameFor(fullName, role),
+          content: Buffer.from(uploaded.data, "base64"),
+          contentType: uploaded.contentType,
+        },
+      });
+    }
+  }
+
   const configured = pickResumeUrl(role);
   if (!configured) return null;
 

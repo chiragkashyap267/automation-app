@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRef, useState } from "react";
+import { authHeaders } from "@/lib/appPassword";
 import { fileToBase64 } from "@/lib/image";
 import { buildSignature } from "@/lib/signature";
 import { checkExperience } from "@/lib/experience";
@@ -15,6 +16,7 @@ export default function ProfilePage() {
   const [showPassword, setShowPassword] = useState(false);
   const experience = checkExperience(profile);
   const [fileError, setFileError] = useState("");
+  const [botNote, setBotNote] = useState("");
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function onResumeFile(file: File | undefined) {
@@ -25,11 +27,35 @@ export default function ProfilePage() {
       return;
     }
     try {
-      update({
+      const patch = {
         resumeFileData: await fileToBase64(file),
         resumeFileName: file.name,
         resumeFileType: file.type || "application/pdf",
-      });
+      };
+      update(patch);
+
+      // Mirrored at once rather than on the usual debounce, and the answer
+      // is shown: the bot keeps the file in a separate store with a tighter
+      // size limit than this form allows, so an upload can succeed here and
+      // still not reach the bot. Silence would look like success.
+      setBotNote("Sending to the bot…");
+      try {
+        const res = await fetch("/api/profile", {
+          method: "POST",
+          headers: authHeaders({ "content-type": "application/json" }),
+          body: JSON.stringify({ profile: { ...profile, ...patch } }),
+        });
+        const body = (await res.json()) as { resume?: string };
+        setBotNote(
+          body.resume === "saved"
+            ? "The bot will attach this one from now on."
+            : body.resume === "no-store"
+              ? "Saved here. The bot cannot see it — no storage is configured."
+              : `Saved here, but the bot could not take it: ${body.resume ?? "unknown reason"}.`,
+        );
+      } catch {
+        setBotNote("Saved here, but the bot could not be reached. It will retry as you type.");
+      }
     } catch {
       setFileError("Could not read that file.");
     }
@@ -216,6 +242,7 @@ export default function ProfilePage() {
               className="btn btn-ghost btn-sm shrink-0"
               onClick={() => {
                 update({ resumeFileName: "", resumeFileData: "", resumeFileType: "" });
+                setBotNote("");
                 if (fileRef.current) fileRef.current.value = "";
               }}
             >
@@ -241,6 +268,11 @@ export default function ProfilePage() {
         {fileError && (
           <p className="text-[13px] font-medium" style={{ color: "var(--danger)" }}>
             {fileError}
+          </p>
+        )}
+        {botNote && (
+          <p className="text-[12.5px] leading-relaxed" style={{ color: "var(--muted)" }}>
+            {botNote}
           </p>
         )}
       </Section>

@@ -29,6 +29,7 @@ import { explainImapError } from "@/lib/inboxScan";
 import { scanForPostings } from "@/lib/inboxJobs";
 import { replySubject } from "@/lib/followup";
 import { fetchResume, resumeFilename } from "@/lib/resumeFetch";
+import { loadSharedResume, type SharedResume } from "@/lib/sharedResume";
 import { resumeVariants } from "@/lib/resume";
 import { applyFixes, recipeProblems, validateDraft, type Issue } from "@/lib/validate";
 import {
@@ -228,9 +229,25 @@ async function handleJobs(chatId: number) {
   }
 }
 
+/**
+ * Which resume will actually be attached.
+ *
+ * Worth spelling out, because the answer changed: a file uploaded in the
+ * web app now outranks RESUME_URL, and there is no way to tell from the
+ * outside which one an email carried.
+ */
+function describeResumeSource(uploaded: SharedResume | null): string {
+  if (uploaded) {
+    const age = Math.round((Date.now() - uploaded.savedAt) / 86_400_000);
+    const when = age <= 0 ? "uploaded today" : age === 1 ? "uploaded yesterday" : `uploaded ${age} days ago`;
+    return `${uploaded.filename} (${when} in the web app)`;
+  }
+  return process.env.RESUME_URL?.trim() ? "from RESUME_URL" : "none attached";
+}
+
 async function handleStatus(chatId: number) {
   const providers = providerStatus();
-  const me = await profile();
+  const [me, uploadedResume] = await Promise.all([profile(), loadSharedResume()]);
 
   const pool = (name: string, p: { total: number; available: number } | null) =>
     p ? `${name}: ${p.available}/${p.total} key${p.total === 1 ? "" : "s"} ready` : `${name}: none`;
@@ -254,7 +271,7 @@ async function handleStatus(chatId: number) {
     "SENDING",
     `  gmail: ${me.gmailUser || "GMAIL_USER not set"}`,
     `  password: ${me.gmailAppPassword ? "set" : "GMAIL_APP_PASSWORD not set"}`,
-    `  resume: ${process.env.RESUME_URL?.trim() ? "from RESUME_URL" : "none attached"}`,
+    `  resume: ${describeResumeSource(uploadedResume)}`,
     ...(resumeVariants().length
       ? [`  role-specific: ${resumeVariants().map((v) => v.keyword).join(", ")}`]
       : []),
