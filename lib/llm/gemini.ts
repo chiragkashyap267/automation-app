@@ -5,6 +5,7 @@ import {
   FULL_SYSTEM_PROMPT,
   GEMINI_EXTRACT_SCHEMA,
   GEMINI_FULL_SCHEMA,
+  GEMINI_RESUME_SCHEMA,
   JobsSchema,
   OUTREACH_SYSTEM_PROMPT,
   PITCH_SYSTEM_PROMPT,
@@ -21,6 +22,11 @@ import {
 } from "./prompt";
 import { geminiPool, markFailure, markSuccess, type KeyFailure, type KeyState } from "./keyPool";
 import type { LlmRequest, ReadMode, ReadResult } from "./index";
+import {
+  ParsedResumeSchema,
+  RESUME_SYSTEM_PROMPT,
+  type ParsedResume,
+} from "@/lib/resumeParse";
 import type { Profile } from "@/lib/types";
 
 const MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
@@ -209,6 +215,41 @@ export async function runGemini(req: LlmRequest, mode: ReadMode): Promise<ReadRe
     throw new Error("Gemini returned JSON that did not match the expected shape.");
   }
   return result.data as ReadResult;
+}
+
+/**
+ * Reads a resume PDF into profile fields.
+ *
+ * Gemini takes a PDF as inline data exactly as it takes an image, so this
+ * needs no PDF library and no extra dependency — the file goes up as it
+ * came off the disk.
+ *
+ * A generous token budget: resumeText has to come back whole, because an
+ * email is written from it, and a resume truncated mid-sentence is worse
+ * than no parse at all.
+ */
+export async function readResumeWithGemini(
+  data: string,
+  mimeType: string,
+): Promise<ParsedResume> {
+  const parsed = await withFailover((state) =>
+    callGemini(
+      state,
+      [
+        { inlineData: { mimeType: mimeType || "application/pdf", data } },
+        { text: "Read this resume and fill in the profile fields." },
+      ],
+      RESUME_SYSTEM_PROMPT,
+      GEMINI_RESUME_SCHEMA,
+      16384,
+    ),
+  );
+
+  const result = ParsedResumeSchema.safeParse(parsed);
+  if (!result.success) {
+    throw new Error("Gemini returned JSON that did not match the expected shape.");
+  }
+  return result.data;
 }
 
 /** Writing fallback, used when no Groq or Claude key is configured. */

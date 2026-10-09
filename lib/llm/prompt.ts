@@ -340,3 +340,31 @@ export function buildPitchText(services: ServicesProfile, lead: Lead): string {
 
   return `${buildServicesBlock(services)}\n\nTHE LEAD\n${about}\n\nWrite the subject and body for this pitch.`;
 }
+
+/**
+ * The shape a resume parse comes back in.
+ *
+ * Every field is required so the model answers for all of them rather than
+ * omitting the ones it is unsure about; an empty string is the way to say
+ * "the resume does not state this".
+ */
+const RESUME_PROPS = [
+  "fullName",
+  "headline",
+  "email",
+  "phone",
+  "location",
+  "linkedin",
+  "github",
+  "portfolio",
+  "yearsExperience",
+  "skills",
+  "resumeText",
+] as const;
+
+export const GEMINI_RESUME_SCHEMA = {
+  type: "object",
+  properties: Object.fromEntries(RESUME_PROPS.map((k) => [k, { type: "string" }])),
+  propertyOrdering: [...RESUME_PROPS],
+  required: [...RESUME_PROPS],
+} as const;

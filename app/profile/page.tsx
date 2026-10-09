@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { authHeaders } from "@/lib/appPassword";
+import { applyParsed, changedBy, type ParsedResume } from "@/lib/resumeParse";
 import { fileToBase64 } from "@/lib/image";
 import { buildSignature } from "@/lib/signature";
 import { checkExperience } from "@/lib/experience";
@@ -17,6 +18,9 @@ export default function ProfilePage() {
   const experience = checkExperience(profile);
   const [fileError, setFileError] = useState("");
   const [botNote, setBotNote] = useState("");
+  const [parseNote, setParseNote] = useState("");
+  /** The fields the last parse overwrote, kept so it can be undone. */
+  const [undoable, setUndoable] = useState<Partial<Profile> | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   async function onResumeFile(file: File | undefined) {
@@ -56,8 +60,59 @@ export default function ProfilePage() {
       } catch {
         setBotNote("Saved here, but the bot could not be reached. It will retry as you type.");
       }
+
+      await readIntoForm(patch.resumeFileData, patch.resumeFileType);
     } catch {
       setFileError("Could not read that file.");
+    }
+  }
+
+  /**
+   * Fills the form in from the PDF that was just uploaded.
+   *
+   * The attachment and the text the emails are written from are two
+   * different things, and only one of them used to change on upload — so a
+   * new resume produced mail describing the old one. Reading the file is
+   * what keeps them the same resume.
+   *
+   * What comes back is a draft. It is written into the form so it can be
+   * read and corrected, and the previous values are kept so a bad parse is
+   * one tap away from being undone.
+   */
+  async function readIntoForm(data: string, mimeType: string) {
+    setParseNote("Reading your resume…");
+    setUndoable(null);
+
+    try {
+      const res = await fetch("/api/resume-read", {
+        method: "POST",
+        headers: authHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify({ data, mimeType }),
+      });
+      const body = (await res.json()) as {
+        parsed?: ParsedResume;
+        summary?: string;
+        error?: string;
+      };
+
+      if (!res.ok || !body.parsed) {
+        setParseNote(body.error || "The resume could not be read. Fill the fields in by hand.");
+        return;
+      }
+
+      const changed = changedBy(profile, body.parsed);
+      if (!changed.length) {
+        setParseNote("Read it — everything already matches what is in the form.");
+        return;
+      }
+
+      // Snapshot only the fields about to change, so Undo cannot revert
+      // anything else that was edited in the meantime.
+      setUndoable(Object.fromEntries(changed.map((f) => [f, profile[f]])) as Partial<Profile>);
+      update(applyParsed(profile, body.parsed));
+      setParseNote(body.summary ?? "Read from your resume. Check it over.");
+    } catch {
+      setParseNote("The resume could not be read. Fill the fields in by hand.");
     }
   }
 
@@ -243,6 +298,8 @@ export default function ProfilePage() {
               onClick={() => {
                 update({ resumeFileName: "", resumeFileData: "", resumeFileType: "" });
                 setBotNote("");
+                setParseNote("");
+                setUndoable(null);
                 if (fileRef.current) fileRef.current.value = "";
               }}
             >
@@ -274,6 +331,29 @@ export default function ProfilePage() {
           <p className="text-[12.5px] leading-relaxed" style={{ color: "var(--muted)" }}>
             {botNote}
           </p>
+        )}
+        {parseNote && (
+          <div
+            className="rounded-xl px-3.5 py-2.5"
+            style={{ background: "var(--accent-soft)" }}
+          >
+            <p className="text-[12.5px] leading-relaxed" style={{ color: "var(--muted)" }}>
+              {parseNote}
+            </p>
+            {undoable && (
+              <button
+                type="button"
+                className="btn btn-ghost btn-sm mt-2"
+                onClick={() => {
+                  update(undoable);
+                  setUndoable(null);
+                  setParseNote("Put back what was there before. The file is still attached.");
+                }}
+              >
+                ↩ Undo those changes
+              </button>
+            )}
+          </div>
         )}
       </Section>
 

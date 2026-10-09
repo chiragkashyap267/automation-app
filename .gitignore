@@ -24,3 +24,4 @@ tests/.pitch.bundle.mjs
 tests/.jobs.bundle.mjs
 tests/.share.bundle.mjs
 tests/.linkedin.bundle.mjs
+tests/.resumeparse.bundle.mjs
