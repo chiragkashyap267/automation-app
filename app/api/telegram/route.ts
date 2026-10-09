@@ -240,7 +240,11 @@ function describeResumeSource(uploaded: SharedResume | null): string {
   if (uploaded) {
     const age = Math.round((Date.now() - uploaded.savedAt) / 86_400_000);
     const when = age <= 0 ? "uploaded today" : age === 1 ? "uploaded yesterday" : `uploaded ${age} days ago`;
-    return `${uploaded.filename} (${when} in the web app)`;
+    const size = uploaded.bytes ? `, ${Math.round(uploaded.bytes / 1024)} KB` : "";
+    // Says which store, because "the file is there" and "the file can be
+    // downloaded" are different claims once it is hosted elsewhere.
+    const where = uploaded.url ? "Cloudinary" : "the web app";
+    return `${uploaded.filename} (${when}${size}, in ${where})`;
   }
   return process.env.RESUME_URL?.trim() ? "from RESUME_URL" : "none attached";
 }

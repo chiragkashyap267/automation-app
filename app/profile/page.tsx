@@ -38,10 +38,10 @@ export default function ProfilePage() {
       };
       update(patch);
 
-      // Sent on its own, not folded into the profile mirror. The bot keeps
-      // the file under a tighter size limit than this form allows, so an
-      // upload can succeed here and still not reach the bot — and silence
-      // would look like success.
+      // Sent on its own, not folded into the profile mirror. Where the bot
+      // puts the file decides how big it may be — Cloudinary takes what this
+      // form takes, bare Upstash much less — so an upload can succeed here
+      // and still not reach the bot, and silence would look like success.
       setBotNote("Sending to the bot…");
       try {
         const res = await fetch("/api/resume", {

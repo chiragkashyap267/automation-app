@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { guard } from "@/lib/auth";
-import { loadSharedResume, saveSharedResume } from "@/lib/sharedResume";
+import {
+  loadSharedResume,
+  saveSharedResume,
+  sharedResumeLimit,
+  sharedResumeStore,
+} from "@/lib/sharedResume";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,6 +55,18 @@ export async function GET(request: Request) {
 
   const held = await loadSharedResume();
   return NextResponse.json({
-    resume: held ? { filename: held.filename, savedAt: held.savedAt } : null,
+    resume: held
+      ? {
+          filename: held.filename,
+          savedAt: held.savedAt,
+          bytes: held.bytes ?? null,
+          // Where it lives, never the URL itself: a raw Cloudinary link is
+          // readable by anyone who has it, and this response is one fetch
+          // away from anything running in the page.
+          hosted: Boolean(held.url),
+        }
+      : null,
+    store: sharedResumeStore(),
+    limitBytes: sharedResumeLimit(),
   });
 }

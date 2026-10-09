@@ -1,5 +1,5 @@
 import { describeResumeChoice, pickResumeUrl, resumeFileNameFor } from "./resume";
-import { loadSharedResume } from "./sharedResume";
+import { loadSharedResume, sharedResumeBytes } from "./sharedResume";
 
 /**
  * Downloading the resume that goes with an application.
@@ -71,14 +71,24 @@ export async function fetchResume(role = "", fullName = ""): Promise<ResumeResul
       // rather than after this warm instance happens to be recycled.
       const key = `uploaded:${uploaded.savedAt}`;
       const held = resumeCache.get(key);
-      if (held?.ok) {
-        return { ok: true, attachment: { ...held.attachment, filename: resumeNameFor(fullName, role) } };
+      if (held) {
+        return held.ok
+          ? { ok: true, attachment: { ...held.attachment, filename: resumeNameFor(fullName, role) } }
+          : held;
       }
+
+      // Hosted now, so this can be a download and can therefore fail. The
+      // failure is returned rather than falling through to RESUME_URL:
+      // attaching the resume someone believes they replaced is worse than
+      // saying plainly that the new one could not be fetched.
+      const bytes = await sharedResumeBytes(uploaded);
+      if (!bytes.ok) return cache(key, { ok: false, reason: bytes.reason });
+
       return cache(key, {
         ok: true,
         attachment: {
           filename: resumeNameFor(fullName, role),
-          content: Buffer.from(uploaded.data, "base64"),
+          content: bytes.content,
           contentType: uploaded.contentType,
         },
       });
