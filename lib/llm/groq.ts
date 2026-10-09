@@ -251,3 +251,18 @@ ${JSON_SHAPE}`,
     buildReviseText(profile, facts, draft, problems),
   );
 }
+
+/**
+ * One JSON answer to an arbitrary question, through the same key pool.
+ *
+ * The writers above all return {subject, body}, which is the wrong shape
+ * for anything that is not an email — classifying form fields, for one.
+ * This keeps the failover and the cooldown handling and drops the shape.
+ */
+export async function askGroqJson(
+  system: string,
+  user: string,
+  maxTokens = 2048,
+): Promise<unknown> {
+  return withFailover((state) => callGroq(state, system, user, maxTokens, 0));
+}

@@ -447,6 +447,9 @@ export default function HomePage() {
           <Link href="/services" className="btn btn-ghost btn-sm" aria-label="Freelance services">
             💼
           </Link>
+          <Link href="/apply" className="btn btn-ghost btn-sm" aria-label="Apply on a portal">
+            📋
+          </Link>
           <Link href="/profile" className="btn btn-ghost btn-sm">
             ⚙ Details
           </Link>

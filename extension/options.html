@@ -171,6 +171,34 @@
       </div>
     </div>
 
+    <style>
+      .check { margin: 10px 0 }
+      .check label { font-weight: 500 }
+      .check .hint { margin: 2px 0 0 22px; font-size: 12px; opacity: .7 }
+    </style>
+    <h2 style="font-size: 15px; margin-top: 28px">How it behaves</h2>
+
+    <div class="check">
+      <label><input id="autoFill" type="checkbox" />
+        Fill automatically when an application form opens</label>
+      <p class="hint">Only on the boards this extension already loads into, and only when the page
+        really looks like a form. It still fills nothing it would not fill on a click.</p>
+    </div>
+
+    <div class="check">
+      <label><input id="writeCover" type="checkbox" />
+        Write a cover letter when the form asks for one</label>
+      <p class="hint">Written from your resume and that posting. Adds a few seconds, and only
+        happens when there is actually a cover-letter box on the page.</p>
+    </div>
+
+    <div class="check">
+      <label><input id="followSteps" type="checkbox" />
+        Keep filling as a multi-page form moves on</label>
+      <p class="hint">Workday and the portals built like it swap the fields out without changing
+        the address, so one fill only covers the first step.</p>
+    </div>
+
     <button id="save">Save</button><span id="saved"></span>
 
     <p style="margin-top: 26px">

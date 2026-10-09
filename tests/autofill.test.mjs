@@ -152,8 +152,16 @@ check("expected salary is recognised", classify("Expected CTC"), "expectedCtc");
 check("and refused", NEVER_FILL.has("expectedCtc"), true);
 check("current salary is refused", NEVER_FILL.has("currentCtc"), true);
 check("notice period is refused", NEVER_FILL.has("noticePeriod"), true);
-check("a cover letter is refused", NEVER_FILL.has("coverLetter"), true);
 check("but an email is not", NEVER_FILL.has("email"), false);
+// A cover letter used to be refused along with these, because the only
+// thing to put in the box was something generic. It is written for the
+// posting now, so the box is answered -- but still only when a letter
+// exists for this application, never from a stock paragraph.
+check("a cover letter is no longer refused outright", NEVER_FILL.has("coverLetter"), false);
+check("and is still recognised", classify("Cover letter"), "coverLetter");
+check("with nothing written, nothing is typed", valueFor("coverLetter", { fullName: "X" }), null);
+check("a letter for this application is used",
+  valueFor("coverLetter", { coverLetter: "Dear Acme, ..." }), "Dear Acme, ...");
 
 section("fields it does not pretend to know");
 check("a question of its own", classify("How did you hear about us?"), null);

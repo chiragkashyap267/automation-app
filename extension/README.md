@@ -14,12 +14,41 @@ attaches your resume. Nothing is ever submitted for you.
 ## Using it
 
 Open an application form, click the extension icon, then **Fill this form**.
-It reports what it filled, what it left alone and why, and anything it did not
-recognise.
+A panel appears on the page with what it filled, what it left alone and why.
 
-If a field is missed, use **What can you see on this page?**. It lists every
-field with the words it read and the kind it decided on, which is enough to
-say what the rule should be.
+### It works on forms nobody wrote rules for
+
+A label the pattern list cannot place is sent to the app, which asks a model
+what the field is asking for. Only the label goes -- never your name, your
+phone number or your resume. The profile stays in the browser.
+
+### It stops being wrong
+
+The panel lists anything it did not recognise with a picker beside it. Name a
+field once and it is remembered, against this site and in general, and from
+then on it beats both the pattern list and the model.
+
+It also learns on its own: type your phone number by hand into a field it
+missed, and it works out that the label meant phone. Only exact matches
+count -- a half-match would teach it something wrong, and a wrong lesson is
+worse than none because it then outranks everything else.
+
+### Cover letters
+
+When a form has a cover-letter box, one is written from your resume and that
+posting, and typed in. Never a stock paragraph: if no letter has been written
+for this application, the box is left empty.
+
+### Options worth knowing
+
+- **Fill automatically when a form opens** -- off by default.
+- **Write a cover letter when the form asks for one** -- on.
+- **Keep filling as a multi-page form moves on** -- on. Workday and the
+  portals built like it swap fields out without changing the address, so one
+  fill only covers the first step.
+
+If a field is still missed, use **What can you see on this page?**. It lists
+every field with the words it read and the kind it decided on.
 
 ## What it will not do
 

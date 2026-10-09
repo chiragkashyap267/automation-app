@@ -93,10 +93,21 @@
     ["fullName", /\bname\b/],
   ];
 
-  /** What is this field asking for? Null when nothing is recognised. */
-  function classify(rawLabel) {
+  /**
+   * What is this field asking for? Null when nothing is recognised.
+   *
+   * `overrides` maps a normalised label to a kind, and wins outright. It
+   * carries two things: what you corrected by hand on this site before,
+   * and what the model worked out for labels no pattern here covers.
+   * A correction has to beat the patterns, or correcting one would do
+   * nothing on a label the list already has an opinion about.
+   */
+  function classify(rawLabel, overrides) {
     const label = normalizeLabel(rawLabel);
     if (!label) return null;
+
+    if (overrides && overrides[label]) return overrides[label];
+
     for (const [kind, pattern] of KINDS) {
       if (pattern.test(label)) return kind;
     }
@@ -164,7 +175,11 @@
       nationality: p.nationality || p.country,
       // What you set wins; otherwise work it out from where you live.
       country: p.country || countryFrom(p.location),
-      coverLetter: "",
+      // Empty unless a letter has been written for this application. The
+      // field is no longer refused outright, but nothing generic goes in
+      // it either: a cover letter that could have been sent to anyone is
+      // worse than a blank box.
+      coverLetter: p.coverLetter || "",
 
       dob: p.dob,
       tenthMarks: p.tenthMarks,
@@ -198,7 +213,6 @@
     "currentCtc",
     "expectedCtc",
     "noticePeriod",
-    "coverLetter",
     // Identity and credentials. A government number filled in wrongly can
     // invalidate an application, and none of these belong in a browser
     // extension's storage in the first place.

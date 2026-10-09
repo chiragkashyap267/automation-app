@@ -78,7 +78,67 @@ async function fetchResume(url) {
   };
 }
 
+/** One authenticated POST to the app, with the password kept out of the page. */
+async function callApp(path, body, method = "POST") {
+  const { appUrl, appPassword } = await settings();
+  if (!appPassword) throw new Error("Set your app password in the extension options first.");
+
+  const res = await fetch(`${appUrl}${path}`, {
+    method,
+    headers: { "content-type": "application/json", "x-app-password": appPassword },
+    body: JSON.stringify(body),
+  });
+
+  if (res.status === 401) throw new Error("The app password is wrong.");
+  if (!res.ok) {
+    const said = await res.text();
+    throw new Error(`The app returned ${res.status}. ${said.slice(0, 140)}`);
+  }
+  return res.json();
+}
+
+/**
+ * Asks the app what a set of unrecognised labels are asking for.
+ *
+ * Labels only. The values about to be typed stay in the page, and the
+ * profile never leaves the browser to answer this question.
+ */
+async function resolveFields(host, fields) {
+  return callApp("/api/fill", { host, fields });
+}
+
+/** Records a correction so the same field is not got wrong twice. */
+async function learn(host, corrections, forget) {
+  return callApp("/api/fill", { host, corrections: corrections || [], forget: forget || [] }, "PUT");
+}
+
+/** A cover letter for this specific application, as text for a textarea. */
+async function coverLetter(context) {
+  return callApp("/api/cover", { ...context, pdf: false });
+}
+
 chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
+  if (msg.type === "resolve") {
+    resolveFields(msg.host, msg.fields).then(
+      (data) => reply({ ok: true, data }),
+      (err) => reply({ ok: false, error: err.message }),
+    );
+    return true;
+  }
+  if (msg.type === "learn") {
+    learn(msg.host, msg.corrections, msg.forget).then(
+      (data) => reply({ ok: true, data }),
+      (err) => reply({ ok: false, error: err.message }),
+    );
+    return true;
+  }
+  if (msg.type === "cover") {
+    coverLetter(msg.context).then(
+      (data) => reply({ ok: true, data }),
+      (err) => reply({ ok: false, error: err.message }),
+    );
+    return true;
+  }
   if (msg.type === "profile") {
     loadProfile(msg.force).then(
       (data) => reply({ ok: true, data }),

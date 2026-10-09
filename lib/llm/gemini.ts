@@ -295,3 +295,19 @@ export function reviseWithGemini(
 ): Promise<Written> {
   return complete(REVISE_SYSTEM_PROMPT, buildReviseText(profile, facts, draft, problems));
 }
+
+/**
+ * One JSON answer to an arbitrary question, through the same key pool.
+ *
+ * Gemini insists on a response schema when asked for JSON, so the caller
+ * supplies one; that is no loss, since a schema is the only thing that
+ * makes the answer safe to read without defensive parsing everywhere.
+ */
+export async function askGeminiJson(
+  system: string,
+  user: string,
+  schema: unknown,
+  maxTokens = 2048,
+): Promise<unknown> {
+  return withFailover((state) => callGemini(state, [{ text: user }], system, schema, maxTokens));
+}
