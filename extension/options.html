@@ -55,6 +55,14 @@
         font-weight: 600;
         cursor: pointer;
       }
+      .row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      @media (max-width: 420px) {
+        .row { grid-template-columns: 1fr; }
+      }
       p {
         color: var(--muted);
         font-size: 12.5px;
@@ -93,6 +101,75 @@
 
     <label for="nationality">Nationality</label>
     <input id="nationality" type="text" placeholder="Indian" />
+
+    <h2 style="margin-top: 28px; font-size: 15px">Education and current job</h2>
+    <p>
+      Asked for in full by TCS, Infosys, HCL and most Indian IT portals, and kept nowhere else.
+      Marks can be a percentage or a CGPA — whatever your certificate says.
+    </p>
+
+    <label for="dob">Date of birth</label>
+    <input id="dob" type="text" placeholder="12/05/2003" />
+
+    <div class="row">
+      <div>
+        <label for="tenthMarks">10th marks</label>
+        <input id="tenthMarks" type="text" placeholder="88.4" />
+      </div>
+      <div>
+        <label for="tenthYear">10th passing year</label>
+        <input id="tenthYear" type="text" placeholder="2019" />
+      </div>
+    </div>
+    <label for="tenthBoard">10th board</label>
+    <input id="tenthBoard" type="text" placeholder="CBSE" />
+
+    <div class="row">
+      <div>
+        <label for="twelfthMarks">12th marks</label>
+        <input id="twelfthMarks" type="text" placeholder="79.2" />
+      </div>
+      <div>
+        <label for="twelfthYear">12th passing year</label>
+        <input id="twelfthYear" type="text" placeholder="2021" />
+      </div>
+    </div>
+    <label for="twelfthBoard">12th board</label>
+    <input id="twelfthBoard" type="text" placeholder="CBSE" />
+
+    <div class="row">
+      <div>
+        <label for="degree">Degree</label>
+        <input id="degree" type="text" placeholder="B.Tech" />
+      </div>
+      <div>
+        <label for="branch">Branch</label>
+        <input id="branch" type="text" placeholder="Computer Science" />
+      </div>
+    </div>
+    <label for="college">College or university</label>
+    <input id="college" type="text" />
+    <div class="row">
+      <div>
+        <label for="gradMarks">Graduation marks</label>
+        <input id="gradMarks" type="text" placeholder="7.8 CGPA" />
+      </div>
+      <div>
+        <label for="gradYear">Graduation year</label>
+        <input id="gradYear" type="text" placeholder="2025" />
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label for="currentCompany">Current employer</label>
+        <input id="currentCompany" type="text" />
+      </div>
+      <div>
+        <label for="currentDesignation">Current designation</label>
+        <input id="currentDesignation" type="text" />
+      </div>
+    </div>
 
     <button id="save">Save</button><span id="saved"></span>
 

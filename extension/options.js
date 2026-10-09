@@ -1,6 +1,26 @@
 /** Stores the app address, the password, and the few answers it does not keep. */
 
-const FIELDS = ["appUrl", "appPassword", "country", "gender", "nationality"];
+const FIELDS = [
+  "appUrl",
+  "appPassword",
+  "country",
+  "gender",
+  "nationality",
+  "dob",
+  "tenthMarks",
+  "tenthYear",
+  "tenthBoard",
+  "twelfthMarks",
+  "twelfthYear",
+  "twelfthBoard",
+  "degree",
+  "branch",
+  "college",
+  "gradMarks",
+  "gradYear",
+  "currentCompany",
+  "currentDesignation",
+];
 
 /** Sensible for the person this was built for; all of it is editable. */
 const DEFAULTS = {

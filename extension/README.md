@@ -29,6 +29,35 @@ say what the rule should be.
   are left blank on purpose — a wrong number cannot be un-said.
 - **Overwrite you.** A field you have already typed in is left as it is.
 
+## Company portals: TCS, Infosys, HCL and the rest
+
+These are loaded automatically now, along with the platforms most Indian
+employers sit on — SuccessFactors, Phenom, Taleo, iCIMS, Oracle, PeopleStrong,
+Darwinbox, Keka, Zoho Recruit, Zwayam.
+
+They all ask for the same long list, so it is typed once in the options:
+date of birth, 10th and 12th marks, boards and passing years, degree, branch,
+college, graduation marks and year, current employer and designation.
+
+**What it cannot do, and will not pretend to:**
+
+- **Register or log in for you.** Every one of these portals wants an account
+  before it shows you a form. It can fill the signup fields it recognises, but
+  an OTP, an email verification or a captcha is yours.
+- **Fill a table.** TCS and Infosys often lay education out as a grid, with one
+  row per qualification and the labels as column headings. Every row then reads
+  as "Percentage" with nothing to say which qualification it belongs to, so
+  those cells are left alone rather than filled with a guess. Use **What can
+  you see on this page?** — if the rows turn out to be distinguishable, the rule
+  is a small fix.
+- **Carry you through a wizard.** These forms run over several pages. Press
+  Fill on each one.
+
+**What it refuses outright:** PAN, Aadhaar, passport number, bank account,
+IFSC, UAN or PF number, passwords and captchas. A government number filled in
+wrongly can invalidate an application, and none of it belongs in a browser
+extension's storage.
+
 ## Where it works
 
 The known boards — Greenhouse, Lever, Ashby, SmartRecruiters, Workday and

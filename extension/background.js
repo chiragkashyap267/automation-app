@@ -11,22 +11,19 @@
 const DEFAULT_APP = "https://jdmailer.vercel.app";
 
 async function settings() {
-  const stored = await chrome.storage.local.get([
-    "appUrl",
-    "appPassword",
-    "country",
-    "gender",
-    "nationality",
-  ]);
+  const EXTRA_KEYS = [
+    "country", "gender", "nationality", "dob",
+    "tenthMarks", "tenthYear", "tenthBoard",
+    "twelfthMarks", "twelfthYear", "twelfthBoard",
+    "degree", "branch", "college", "gradMarks", "gradYear",
+    "currentCompany", "currentDesignation",
+  ];
+  const stored = await chrome.storage.local.get(["appUrl", "appPassword", ...EXTRA_KEYS]);
   return {
     appUrl: (stored.appUrl || DEFAULT_APP).replace(/\/+$/, ""),
     appPassword: stored.appPassword || "",
     // Asked for on nearly every form, kept by nothing else.
-    extras: {
-      country: stored.country || "",
-      gender: stored.gender || "",
-      nationality: stored.nationality || "",
-    },
+    extras: Object.fromEntries(EXTRA_KEYS.map((k) => [k, stored[k] || ""])),
   };
 }
 

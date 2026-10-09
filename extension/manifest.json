@@ -3,7 +3,11 @@
   "name": "JD Mailer Autofill",
   "version": "0.1.0",
   "description": "Fills job application forms from the profile you already keep in JD Mailer, and attaches your resume.",
-  "permissions": ["storage", "activeTab", "scripting"],
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
   "host_permissions": [
     "https://jdmailer.vercel.app/*",
     "https://boards.greenhouse.io/*",
@@ -12,10 +16,39 @@
     "https://jobs.ashbyhq.com/*",
     "https://jobs.smartrecruiters.com/*",
     "https://*.myworkdayjobs.com/*",
-    "https://careers.hcltech.com/*"
+    "https://careers.hcltech.com/*",
+    "https://ibegin.tcs.com/*",
+    "https://*.tcs.com/*",
+    "https://career.infosys.com/*",
+    "https://careers.wipro.com/*",
+    "https://careers.techmahindra.com/*",
+    "https://jobs.hexaware.com/*",
+    "https://careers.coforge.com/*",
+    "https://*.zwayam.com/*",
+    "https://*.ltimindtree.com/*",
+    "https://*.capgemini.com/*",
+    "https://*.successfactors.com/*",
+    "https://*.phenompeople.com/*",
+    "https://*.taleo.net/*",
+    "https://*.icims.com/*",
+    "https://*.oraclecloud.com/*",
+    "https://*.peoplestrong.com/*",
+    "https://*.darwinbox.in/*",
+    "https://*.darwinbox.com/*",
+    "https://*.keka.com/*",
+    "https://*.zohorecruit.com/*",
+    "https://*.recruitee.com/*",
+    "https://*.workable.com/*",
+    "https://*.freshteam.com/*"
   ],
-  "background": { "service_worker": "background.js", "type": "module" },
-  "action": { "default_popup": "popup.html", "default_title": "Fill this application" },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Fill this application"
+  },
   "options_page": "options.html",
   "content_scripts": [
     {
@@ -26,9 +59,35 @@
         "https://jobs.ashbyhq.com/*",
         "https://jobs.smartrecruiters.com/*",
         "https://*.myworkdayjobs.com/*",
-        "https://careers.hcltech.com/*"
+        "https://careers.hcltech.com/*",
+        "https://ibegin.tcs.com/*",
+        "https://*.tcs.com/*",
+        "https://career.infosys.com/*",
+        "https://careers.wipro.com/*",
+        "https://careers.techmahindra.com/*",
+        "https://jobs.hexaware.com/*",
+        "https://careers.coforge.com/*",
+        "https://*.zwayam.com/*",
+        "https://*.ltimindtree.com/*",
+        "https://*.capgemini.com/*",
+        "https://*.successfactors.com/*",
+        "https://*.phenompeople.com/*",
+        "https://*.taleo.net/*",
+        "https://*.icims.com/*",
+        "https://*.oraclecloud.com/*",
+        "https://*.peoplestrong.com/*",
+        "https://*.darwinbox.in/*",
+        "https://*.darwinbox.com/*",
+        "https://*.keka.com/*",
+        "https://*.zohorecruit.com/*",
+        "https://*.recruitee.com/*",
+        "https://*.workable.com/*",
+        "https://*.freshteam.com/*"
       ],
-      "js": ["fields.js", "content.js"],
+      "js": [
+        "fields.js",
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
   ]

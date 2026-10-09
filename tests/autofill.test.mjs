@@ -74,6 +74,78 @@ check("unset gender fills nothing", valueFor("gender", { location: "Noida" }), n
 check("country is worked out when unset", valueFor("country", { location: "Noida, Uttar Pradesh" }), "India");
 check("a non-Indian address is not called India", valueFor("country", { location: "Berlin, Germany" }), null);
 
+section("education, which Indian IT portals ask for in full");
+// Order is everything here: "10th percentage" must not fall through to the
+// bare "percentage" rule that belongs to graduation.
+check("10th marks", classify("10th Percentage"), "tenthMarks");
+check("SSC marks", classify("SSC Marks"), "tenthMarks");
+check("10th passing year", classify("10th Passing Year"), "tenthYear");
+check("10th board", classify("10th Board"), "tenthBoard");
+check("12th marks", classify("12th Percentage"), "twelfthMarks");
+check("HSC marks", classify("HSC Marks"), "twelfthMarks");
+check("12th passing year", classify("12th Year of Passing"), "twelfthYear");
+check("12th board", classify("Intermediate Board"), "twelfthBoard");
+check("graduation year", classify("Graduation Passing Year"), "gradYear");
+check("a bare percentage is graduation", classify("Percentage"), "gradMarks");
+check("CGPA is graduation", classify("CGPA"), "gradMarks");
+check("college", classify("College Name"), "college");
+check("university", classify("University"), "college");
+check("branch", classify("Branch / Specialization"), "branch");
+check("degree", classify("Highest Qualification"), "degree");
+check("date of birth", classify("Date of Birth"), "dob");
+check("DOB abbreviated", classify("DOB"), "dob");
+
+section("current employment");
+check("current employer", classify("Current Company"), "currentCompany");
+check("current designation", classify("Current Designation"), "currentDesignation");
+
+section("those answers are typed once in the options");
+const student = {
+  location: "Noida",
+  headline: "Full Stack Developer",
+  tenthMarks: "88.4",
+  tenthYear: "2019",
+  tenthBoard: "CBSE",
+  twelfthMarks: "79.2",
+  degree: "B.Tech",
+  branch: "Computer Science",
+  college: "ABC Institute of Technology",
+  gradMarks: "7.8 CGPA",
+  gradYear: "2025",
+  dob: "12/05/2003",
+};
+check("10th marks", valueFor("tenthMarks", student), "88.4");
+check("10th board", valueFor("tenthBoard", student), "CBSE");
+check("degree", valueFor("degree", student), "B.Tech");
+check("college", valueFor("college", student), "ABC Institute of Technology");
+check("graduation marks", valueFor("gradMarks", student), "7.8 CGPA");
+check("date of birth", valueFor("dob", student), "12/05/2003");
+// Falls back to the headline, which is the same answer in practice.
+check("designation falls back to the headline", valueFor("currentDesignation", student), "Full Stack Developer");
+check("an unset education field stays empty", valueFor("twelfthBoard", student), null);
+
+section("identity numbers are recognised so they can be refused by name");
+// A wrong government number can invalidate an application outright, and
+// none of these belong in extension storage to begin with.
+check("PAN", classify("PAN Number"), "pan");
+check("Aadhaar", classify("Aadhaar Number"), "aadhaar");
+check("passport", classify("Passport Number"), "passport");
+check("bank account", classify("Bank Account Number"), "bank");
+check("IFSC", classify("IFSC Code"), "bank");
+check("UAN", classify("UAN / PF Number"), "uan");
+check("a password field", classify("Password"), "password");
+check("a captcha", classify("Enter Captcha"), "captcha");
+check("PAN is refused", NEVER_FILL.has("pan"), true);
+check("Aadhaar is refused", NEVER_FILL.has("aadhaar"), true);
+check("passport is refused", NEVER_FILL.has("passport"), true);
+check("bank details are refused", NEVER_FILL.has("bank"), true);
+check("UAN is refused", NEVER_FILL.has("uan"), true);
+check("passwords are refused", NEVER_FILL.has("password"), true);
+check("captchas are refused", NEVER_FILL.has("captcha"), true);
+// And the ordinary fields are not caught by any of that.
+check("but a plain email is still filled", NEVER_FILL.has("email"), false);
+check("and 10th marks are still filled", NEVER_FILL.has("tenthMarks"), false);
+
 section("what it refuses to answer for you");
 // Salary and notice period cannot be un-said once submitted.
 check("expected salary is recognised", classify("Expected CTC"), "expectedCtc");

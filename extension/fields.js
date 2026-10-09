@@ -36,11 +36,44 @@
     ["middleName", /\bmiddle\s*name\b/],
     ["preferredName", /\b(preferred|nick)\s*name\b/],
     // The normaliser has already turned "E-Mail" into "e mail".
+    // --- things no autofill should ever answer ---
+    // Indian portals ask for these, and a wrong government number is worse
+    // than a blank one: it can invalidate an application outright. These
+    // are classified so they can be refused by name rather than silently
+    // missed, which is how you learn they were skipped.
+    ["pan", /\bpan\b.*\b(number|no|card)\b|\bpan\s?(number|no|card)\b/],
+    ["aadhaar", /\b(aadha?ar|uid)\b/],
+    ["passport", /\bpassport\b/],
+    ["bank", /\b(bank account|account number|ifsc|upi)\b/],
+    ["uan", /\b(uan|pf number|provident fund)\b/],
+    ["password", /\bpassword\b/],
+    ["captcha", /\bcaptcha\b/],
+
     ["email", /\be\s?mail\b/],
     ["phone", /\b(phone|mobile|telephone|contact number)\b/],
     ["linkedin", /\blinked\s*in\b/],
     ["github", /\bgit\s*hub\b/],
     ["portfolio", /\b(portfolio|personal (web)?site|website|personal url)\b/],
+    // --- education, which every Indian IT portal asks for in full ---
+    // Most specific first: "10th percentage" must not be read as a bare
+    // "percentage", and the graduation row must not catch the school ones.
+    ["tenthYear", /\b(10th|tenth|ssc|sslc|matriculation)\b.*\b(year|passing|yop)\b/],
+    ["tenthBoard", /\b(10th|tenth|ssc|sslc|matriculation)\b.*\bboard\b/],
+    ["tenthMarks", /\b(10th|tenth|ssc|sslc|matriculation)\b/],
+    ["twelfthYear", /\b(12th|twelfth|hsc|intermediate|senior secondary)\b.*\b(year|passing|yop)\b/],
+    ["twelfthBoard", /\b(12th|twelfth|hsc|intermediate|senior secondary)\b.*\bboard\b/],
+    ["twelfthMarks", /\b(12th|twelfth|hsc|intermediate|senior secondary)\b/],
+    ["gradYear", /\b(graduation|degree|ug|bachelor|b tech|btech|bca|bsc|bcom)\b.*\b(year|passing|yop)\b/],
+    ["college", /\b(college|university|institute|institution|school name)\b/],
+    ["branch", /\b(branch|specialisation|specialization|stream|discipline|major)\b/],
+    ["degree", /\b(degree|qualification|course)\b/],
+    ["gradMarks", /\b(graduation|ug|bachelor|aggregate|cgpa|percentage|marks)\b/],
+
+    // --- current employment ---
+    ["currentCompany", /\bcurrent\b.*\b(employer|company|organisation|organization)\b/],
+    ["currentDesignation", /\bcurrent\b.*\b(designation|role|title|position)\b/],
+    ["dob", /\b(date of birth|dob|birth date|birthday)\b/],
+
     ["noticePeriod", /\bnotice period\b/],
     ["currentCtc", /\b(current)\b.*\b(ctc|salary|compensation)\b/],
     ["expectedCtc", /\b(expected|desired)\b.*\b(ctc|salary|compensation)\b/],
@@ -132,6 +165,21 @@
       // What you set wins; otherwise work it out from where you live.
       country: p.country || countryFrom(p.location),
       coverLetter: "",
+
+      dob: p.dob,
+      tenthMarks: p.tenthMarks,
+      tenthYear: p.tenthYear,
+      tenthBoard: p.tenthBoard,
+      twelfthMarks: p.twelfthMarks,
+      twelfthYear: p.twelfthYear,
+      twelfthBoard: p.twelfthBoard,
+      degree: p.degree,
+      branch: p.branch,
+      college: p.college,
+      gradMarks: p.gradMarks,
+      gradYear: p.gradYear,
+      currentCompany: p.currentCompany,
+      currentDesignation: p.currentDesignation || p.headline,
     };
 
     const value = map[kind];
@@ -146,10 +194,21 @@
    * than an empty field. Salary in particular cannot be un-said.
    */
   const NEVER_FILL = new Set([
+    // Money and dates you have to decide, not recall.
     "currentCtc",
     "expectedCtc",
     "noticePeriod",
     "coverLetter",
+    // Identity and credentials. A government number filled in wrongly can
+    // invalidate an application, and none of these belong in a browser
+    // extension's storage in the first place.
+    "pan",
+    "aadhaar",
+    "passport",
+    "bank",
+    "uan",
+    "password",
+    "captcha",
   ]);
 
   root.JDFields = {
