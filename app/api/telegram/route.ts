@@ -846,6 +846,28 @@ async function handleMessage(message: TgMessage) {
     return;
   }
 
+  // Everything past this point writes an email, and writing one without a
+  // profile produces an application from nobody describing no experience.
+  // There used to be a built-in profile to fall back on, which hid this —
+  // and wrote from someone's old resume once the real one changed.
+  const ready = await profile();
+  if (!ready.fullName.trim() || !ready.resumeText.trim()) {
+    await say(
+      chatId,
+      [
+        "I have nothing to write from yet.",
+        "",
+        !ready.fullName.trim() ? "• your name is not set" : "",
+        !ready.resumeText.trim() ? "• your resume text is empty" : "",
+        "",
+        "Open the web app, fill in Details and paste your resume text. It reaches me on its own within a few seconds.",
+      ]
+        .filter((line) => line !== "")
+        .join(NL),
+    );
+    return;
+  }
+
   // A link on its own has nothing to read. LinkedIn in particular serves job
   // pages to logged-out visitors with the description stripped out, so there
   // is no posting text and no address behind the link — say so rather than
