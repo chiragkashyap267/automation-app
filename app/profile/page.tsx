@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRef, useState } from "react";
 import { authHeaders } from "@/lib/appPassword";
-import { applyParsed, changedBy, type ParsedResume } from "@/lib/resumeParse";
+import { changedBy, parsedPatch, type ParsedResume } from "@/lib/resumeParse";
 import { fileToBase64 } from "@/lib/image";
 import { buildSignature } from "@/lib/signature";
 import { checkExperience } from "@/lib/experience";
@@ -38,30 +38,45 @@ export default function ProfilePage() {
       };
       update(patch);
 
-      // Mirrored at once rather than on the usual debounce, and the answer
-      // is shown: the bot keeps the file in a separate store with a tighter
-      // size limit than this form allows, so an upload can succeed here and
-      // still not reach the bot. Silence would look like success.
+      // Sent on its own, not folded into the profile mirror. The bot keeps
+      // the file under a tighter size limit than this form allows, so an
+      // upload can succeed here and still not reach the bot — and silence
+      // would look like success.
       setBotNote("Sending to the bot…");
       try {
-        const res = await fetch("/api/profile", {
+        const res = await fetch("/api/resume", {
           method: "POST",
           headers: authHeaders({ "content-type": "application/json" }),
-          body: JSON.stringify({ profile: { ...profile, ...patch } }),
+          body: JSON.stringify({
+            data: patch.resumeFileData,
+            filename: patch.resumeFileName,
+            contentType: patch.resumeFileType,
+          }),
         });
-        const body = (await res.json()) as { resume?: string };
-        setBotNote(
-          body.resume === "saved"
-            ? "The bot will attach this one from now on."
-            : body.resume === "no-store"
-              ? "Saved here. The bot cannot see it — no storage is configured."
-              : `Saved here, but the bot could not take it: ${body.resume ?? "unknown reason"}.`,
-        );
+        const body = (await res.json()) as { ok?: boolean; reason?: string; error?: string };
+
+        // Every branch says something specific. "Unknown reason" is what
+        // you get for assuming one response shape, and it tells nobody
+        // anything they can act on.
+        if (!res.ok) {
+          setBotNote(
+            `Saved here, but the bot refused it (${res.status}): ${body.error ?? "no reason given"}.`,
+          );
+        } else if (body.ok) {
+          setBotNote("The bot will attach this one from now on.");
+        } else if (body.reason === "no-store") {
+          setBotNote("Saved here. The bot cannot see it — no storage is configured.");
+        } else {
+          setBotNote(`Saved here, but the bot could not take it: ${body.reason ?? "no reason given"}.`);
+        }
       } catch {
-        setBotNote("Saved here, but the bot could not be reached. It will retry as you type.");
+        setBotNote("Saved here, but the bot could not be reached. Choose the file again to retry.");
       }
 
-      await readIntoForm(patch.resumeFileData, patch.resumeFileType);
+      // Passed the up-to-date profile explicitly. Reading it from the
+      // closure gives the value from before the upload, and writing that
+      // back is what erased the attachment.
+      await readIntoForm({ ...profile, ...patch });
     } catch {
       setFileError("Could not read that file.");
     }
@@ -78,8 +93,12 @@ export default function ProfilePage() {
    * What comes back is a draft. It is written into the form so it can be
    * read and corrected, and the previous values are kept so a bad parse is
    * one tap away from being undone.
+   *
+   * Takes the current profile as an argument rather than reading it from
+   * the closure: by the time this runs the upload has already changed it,
+   * and the closure still holds the version from before.
    */
-  async function readIntoForm(data: string, mimeType: string) {
+  async function readIntoForm(current: Profile) {
     setParseNote("Reading your resume…");
     setUndoable(null);
 
@@ -87,7 +106,10 @@ export default function ProfilePage() {
       const res = await fetch("/api/resume-read", {
         method: "POST",
         headers: authHeaders({ "content-type": "application/json" }),
-        body: JSON.stringify({ data, mimeType }),
+        body: JSON.stringify({
+          data: current.resumeFileData,
+          mimeType: current.resumeFileType,
+        }),
       });
       const body = (await res.json()) as {
         parsed?: ParsedResume;
@@ -100,7 +122,7 @@ export default function ProfilePage() {
         return;
       }
 
-      const changed = changedBy(profile, body.parsed);
+      const changed = changedBy(current, body.parsed);
       if (!changed.length) {
         setParseNote("Read it — everything already matches what is in the form.");
         return;
@@ -108,8 +130,10 @@ export default function ProfilePage() {
 
       // Snapshot only the fields about to change, so Undo cannot revert
       // anything else that was edited in the meantime.
-      setUndoable(Object.fromEntries(changed.map((f) => [f, profile[f]])) as Partial<Profile>);
-      update(applyParsed(profile, body.parsed));
+      setUndoable(Object.fromEntries(changed.map((f) => [f, current[f]])) as Partial<Profile>);
+      // A patch, not a whole profile: it can only touch the fields the
+      // resume spoke to, so the file just attached cannot be undone by it.
+      update(parsedPatch(body.parsed));
       setParseNote(body.summary ?? "Read from your resume. Check it over.");
     } catch {
       setParseNote("The resume could not be read. Fill the fields in by hand.");

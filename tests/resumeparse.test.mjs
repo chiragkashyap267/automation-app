@@ -1,5 +1,5 @@
 // Reading a resume PDF back into the profile.
-const { ParsedResumeSchema, RESUME_FIELDS, RESUME_SYSTEM_PROMPT, applyParsed, changedBy, describeParse, filledFields, EMPTY_PROFILE } =
+const { ParsedResumeSchema, RESUME_FIELDS, RESUME_SYSTEM_PROMPT, applyParsed, changedBy, describeParse, filledFields, parsedPatch, EMPTY_PROFILE } =
   await import("./.resumeparse.bundle.mjs");
 
 let pass = 0, fail = 0;
@@ -53,6 +53,24 @@ check("a field the resume omits is left alone", applied.portfolio, "typed-by-han
 check("the tone is not a resume's business", applied.tone, "direct");
 check("nor the sign-off", applied.signOff, "Thanks");
 check("values are trimmed", applyParsed(mine, parse({ skills: "  React  " })).skills, "React");
+
+section("a parse is a patch, so it cannot erase the file it came from");
+// The bug this pins: applying a parse built from a profile captured before
+// the upload wrote that stale copy back, and the attachment disappeared
+// from the form seconds after being chosen.
+const patch = parsedPatch(parse());
+check("the patch names only resume fields", Object.keys(patch).every((k) => RESUME_FIELDS.includes(k)), true);
+check("the attachment data is not in it", "resumeFileData" in patch, false);
+check("nor the file name", "resumeFileName" in patch, false);
+check("nor the file type", "resumeFileType" in patch, false);
+check("nor the Gmail password", "gmailAppPassword" in patch, false);
+// Merged over a profile that has a file attached, the file survives.
+const withFile = { ...EMPTY_PROFILE, resumeFileName: "new.pdf", resumeFileData: "JVBER", resumeFileType: "application/pdf" };
+const merged = { ...withFile, ...patch };
+check("the file name survives the merge", merged.resumeFileName, "new.pdf");
+check("so does the file itself", merged.resumeFileData, "JVBER");
+check("and the skills still arrive", merged.skills, "React, Next.js, Node.js");
+check("a parse that found nothing is an empty patch", parsedPatch(ParsedResumeSchema.parse({})), {});
 
 section("what a parse would change, before it changes it");
 const already = { ...EMPTY_PROFILE, ...parse() };

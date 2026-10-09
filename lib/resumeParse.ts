@@ -69,16 +69,28 @@ export function filledFields(parsed: ParsedResume): ResumeField[] {
 }
 
 /**
- * Applies a parse over the current profile.
+ * Just the fields the resume spoke to, as a patch.
+ *
+ * A patch rather than a whole profile on purpose. Building a full profile
+ * from a copy held in a closure and then saving that copy is how the
+ * attachment got erased: the copy predated the upload, so writing it back
+ * undid it. A patch can only ever touch what it names.
+ */
+export function parsedPatch(parsed: ParsedResume): Partial<Profile> {
+  const patch: Partial<Profile> = {};
+  for (const field of filledFields(parsed)) patch[field] = parsed[field].trim();
+  return patch;
+}
+
+/**
+ * Applies a parse over a profile.
  *
  * Only fields the resume spoke to are touched, so a resume that omits a
  * portfolio link does not wipe the one already typed in. Everything else —
  * tone, sign-off, Gmail details, the attachment itself — is left alone.
  */
 export function applyParsed(profile: Profile, parsed: ParsedResume): Profile {
-  const next = { ...profile };
-  for (const field of filledFields(parsed)) next[field] = parsed[field].trim();
-  return next;
+  return { ...profile, ...parsedPatch(parsed) };
 }
 
 /** Which fields a parse would change, for saying so before it is applied. */

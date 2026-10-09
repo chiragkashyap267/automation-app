@@ -7,7 +7,7 @@ import {
   stripSecrets,
 } from "@/lib/sharedProfile";
 import { resolveResumeUrl, resumeFilename } from "@/lib/resumeFetch";
-import { loadSharedResume, saveSharedResume, type SaveResult } from "@/lib/sharedResume";
+import { loadSharedResume } from "@/lib/sharedResume";
 import { EMPTY_PROFILE, type Profile } from "@/lib/types";
 
 export const runtime = "nodejs";
@@ -61,21 +61,6 @@ export async function POST(request: Request) {
 
   const saved = await saveSharedProfile(stripSecrets(profile));
 
-  // The uploaded PDF travels separately. It is stripped out of the profile
-  // along with the credentials, and without this the bot would keep
-  // attaching whatever RESUME_URL points at long after a new one was
-  // uploaded here.
-  let resume: SaveResult | null = null;
-  if (profile.resumeFileData) {
-    resume = await saveSharedResume(
-      profile.resumeFileData,
-      profile.resumeFileName,
-      profile.resumeFileType,
-    );
-  }
-
-  return NextResponse.json({
-    ok: saved,
-    resume: resume ? (resume.ok ? "saved" : resume.reason) : "none uploaded",
-  });
+  // The resume file has its own endpoint; it never arrives here.
+  return NextResponse.json({ ok: saved });
 }

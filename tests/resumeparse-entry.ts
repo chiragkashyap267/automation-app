@@ -6,5 +6,6 @@ export {
   changedBy,
   describeParse,
   filledFields,
+  parsedPatch,
 } from "../lib/resumeParse";
 export { EMPTY_PROFILE } from "../lib/types";

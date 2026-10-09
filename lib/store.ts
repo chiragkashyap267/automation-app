@@ -68,10 +68,17 @@ function queueMirror(profile: Profile) {
   if (mirrorTimer) clearTimeout(mirrorTimer);
 
   mirrorTimer = setTimeout(() => {
+    // The attachment is deliberately left out. The server strips it before
+    // storing anyway, and sending a few hundred kilobytes of base64 on
+    // every pause in typing is what made this request large enough to be
+    // refused -- taking the profile save down with it. The file has its
+    // own endpoint, called once when it is chosen.
+    const { resumeFileData: _file, ...rest } = profile;
+
     void fetch("/api/profile", {
       method: "POST",
       headers: authHeaders({ "content-type": "application/json" }),
-      body: JSON.stringify({ profile }),
+      body: JSON.stringify({ profile: rest }),
       // Failing to mirror is not worth interrupting anyone over.
     }).catch(() => {});
   }, 2000);
