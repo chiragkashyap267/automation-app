@@ -2,22 +2,12 @@
 // If that round-trip is wrong, the wrong email goes out — so test it directly.
 import { readFileSync } from "node:fs";
 
+const { renderDraft, parseDraft, stripTrailingNotes, withNotes } =
+  await import("./.draft.bundle.mjs");
+
+// Some sections below still lift small pure helpers straight out of the
+// route, which has no module of its own to import.
 const src = readFileSync("app/api/telegram/route.ts", "utf8");
-// Lift the two pure functions out of the route rather than booting Next.
-const body = src.slice(src.indexOf("function renderDraft"), src.indexOf("const HELP"));
-const mod = await import(
-  "data:text/javascript," +
-    encodeURIComponent(
-      body
-        // Crude TypeScript stripping: enough for the two pure functions
-        // lifted out of the route, including union literal types.
-        .replace(/:\s*"[^"]*"(?:\s*\|\s*"[^"]*")+/g, "")
-        .replace(/:\s*string\[\]/g, "")
-        .replace(/:\s*string/g, "")
-        .replace(/\bfunction /g, "export function ")
-    )
-);
-const { renderDraft, parseDraft } = mod;
 
 let pass = 0, fail = 0;
 const check = (label, actual, expected) => {
@@ -25,6 +15,7 @@ const check = (label, actual, expected) => {
   console.log(`${ok ? "PASS" : "FAIL"}  ${label}${ok ? "" : `\n        got ${JSON.stringify(actual)} want ${JSON.stringify(expected)}`}`);
   ok ? pass++ : fail++;
 };
+const section = (n) => console.log(`\n-- ${n}`);
 
 const BODY = `Dear Rahul Mehta,
 
@@ -144,6 +135,72 @@ check("plain text is not an enquiry", a.parseAsk("hello there"), null);
     "application",
   );
 }
+
+section("the bot's own remarks must never reach the employer");
+// This one went out for real: a warning printed under the signature, in
+// the email, to the company. The body was read as "everything after the
+// Subject line", and the warning had been appended to the same message.
+const WARNED_BODY =
+  "Dear Team,\n\nI am applying for the role.\n\nBest regards,\nCHIRAG KASHYAP\n+91 9548174325";
+const warned = withNotes(
+  renderDraft("Tramo", "Full-Stack Web Developer", ["hr@tramo.in"], "Application", WARNED_BODY),
+  ["⚠️ You wrote to hr@tramo.in 5 days ago. Sending again may read as spam."],
+);
+const sent = parseDraft(warned);
+check("the warning is not in the email", sent.body.includes("read as spam"), false);
+check("the body is intact", sent.body, WARNED_BODY);
+check("the recipient still parses", sent.to, ["hr@tramo.in"]);
+check("and the company, though a note sits above it", sent.company, "Tramo");
+check("and the role", sent.role, "Full-Stack Web Developer");
+check("the warning is still shown to you", warned.includes("read as spam"), true);
+check(
+  "and above the draft, where it is read before the thumb reaches Send",
+  warned.indexOf("read as spam") < warned.indexOf("📬"),
+  true,
+);
+
+const manyNotes = parseDraft(
+  withNotes(renderDraft("A", "B", ["x@y.com"], "S", WARNED_BODY), [
+    "♻️ Written from a saved recipe — no API call.",
+    "⚠️ You wrote to A 3 days ago. Sending again may read as spam.",
+  ]),
+);
+check("several notes, none of them in the email", manyNotes.body, WARNED_BODY);
+check(
+  "a draft with no notes is unchanged",
+  parseDraft(renderDraft("A", "B", ["x@y.com"], "S", WARNED_BODY)).body,
+  WARNED_BODY,
+);
+
+section("drafts already sitting in the chat");
+// Telegram keeps old messages and their Send buttons still work, so a
+// draft posted before this fix has its notes underneath. The parser has
+// to cope with that shape too, or the bug outlives its own repair.
+const legacy =
+  renderDraft("Tramo", "Dev", ["hr@tramo.in"], "Application", WARNED_BODY) +
+  "\n\n⚠️ You wrote to hr@tramo.in 5 days ago. Sending again may read as spam.";
+check("an old draft is cleaned on the way out", parseDraft(legacy).body, WARNED_BODY);
+
+const legacyMany =
+  renderDraft("A", "B", ["x@y.com"], "S", WARNED_BODY) +
+  "\n\n♻️ Written from a saved recipe — no API call." +
+  "\n⚠️ Check x@y.com against the posting.";
+check("so is one carrying several", parseDraft(legacyMany).body, WARNED_BODY);
+
+section("what the stripper will not touch");
+check("ordinary prose survives", stripTrailingNotes(WARNED_BODY), WARNED_BODY);
+// Only at the end, and only the bot's own markers: an email body is
+// prose and a signature, and neither begins a line with a warning sign.
+check(
+  "a marker in the middle is left alone",
+  stripTrailingNotes("Hello\n⚠️ odd line\n\nReal ending."),
+  "Hello\n⚠️ odd line\n\nReal ending.",
+);
+check("trailing blank lines go", stripTrailingNotes("Body.\n\n\n"), "Body.");
+check("an empty body stays empty", stripTrailingNotes(""), "");
+check("a body of nothing but a note becomes empty", stripTrailingNotes("⛔ nope"), "");
+check("withNotes with nothing to say changes nothing", withNotes("draft", []), "draft");
+check("blank notes are dropped", withNotes("draft", ["", "  "]), "draft");
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

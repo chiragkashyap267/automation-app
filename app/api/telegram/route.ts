@@ -59,6 +59,7 @@ import {
   postAsText,
   readLinkedIn,
 } from "@/lib/linkedin";
+import { parseDraft, renderDraft, withNotes } from "@/lib/draftText";
 import { composeEmail, normalizePlainText } from "@/lib/signature";
 import { EMPTY_PROFILE, type Profile } from "@/lib/types";
 
@@ -446,8 +447,7 @@ async function handleInbox(chatId: number) {
     if (checked.errors.length) {
       await say(
         chatId,
-        `${draft}${NL}${NL}⛔ Not sending this one:${NL}` +
-          checked.errors.map((e) => `• ${e.message}`).join(NL),
+        withNotes(draft, ["⛔ Not sending this one:", ...checked.errors.map((e) => `• ${e.message}`)]),
       );
       continue;
     }
@@ -456,7 +456,7 @@ async function handleInbox(chatId: number) {
 
     await say(
       chatId,
-      `${draft}${NL}${NL}↩️ Goes back inside their own thread.${notes ? `${NL}${NL}${notes}` : ""}`,
+      withNotes(draft, ["↩️ Goes back inside their own thread.", ...checked.warnings.map((w) => `⚠️ ${w.message}`)]),
       {
       reply_markup: {
         inline_keyboard: [
@@ -644,8 +644,7 @@ async function handlePitch(chatId: number, text: string) {
   if (problems.length) {
     await say(
       chatId,
-      `${draft}${NL}${NL}⛔ Not sending this one:${NL}` +
-        problems.map((x) => `• ${x}`).join(NL),
+      withNotes(draft, ["⛔ Not sending this one:", ...problems.map((x) => `• ${x}`)]),
     );
     return;
   }
@@ -660,58 +659,6 @@ async function handlePitch(chatId: number, text: string) {
       ],
     },
   });
-}
-
-/** The reply doubles as the store, so its shape has to be parseable. */
-function renderDraft(
-  company: string,
-  role: string,
-  to: string[],
-  subject: string,
-  body: string,
-  threadId = "",
-  kind: "application" | "pitch" = "application",
-) {
-  const header = [company, role].filter(Boolean).join(" — ") || "Job application";
-  // The Thread line is how a reply to mail we received keeps its thread:
-  // the draft text is the only place state lives between two webhook calls.
-  const thread = threadId ? `Thread: ${threadId}\n` : "";
-  // A pitch must not pick up a resume or an application-shaped nudge,
-  // and the draft text is the only state that survives to the Send tap.
-  const stamp = kind === "pitch" ? `Kind: pitch\n` : "";
-  return `📬 ${header}\n\nTo: ${to.join(", ")}\n${thread}${stamp}Subject: ${subject}\n\n${body}`;
-}
-
-function parseDraft(text: string) {
-  const to = text.match(/^To:\s*(.+)$/m)?.[1] ?? "";
-  const threadId = text.match(/^Thread:\s*(.+)$/m)?.[1]?.trim() ?? "";
-  const kind: "application" | "pitch" = /^Kind:\s*pitch$/m.test(text)
-    ? "pitch"
-    : "application";
-  const subject = text.match(/^Subject:\s*(.+)$/m)?.[1] ?? "";
-  const subjectAt = text.indexOf("\nSubject:");
-  if (subjectAt === -1) return null;
-
-  const afterSubject = text.indexOf("\n", subjectAt + 1);
-  const blank = text.indexOf("\n\n", afterSubject);
-  if (blank === -1) return null;
-
-  // The first line is the header renderDraft wrote: an icon, then
-  // "Company — Role". Without the dash there was no company to write down.
-  const header = text.split("\n")[0].replace(/^\S+\s*/, "").trim();
-  const dash = header.includes(" — ") ? header.split(" — ") : [];
-  const company = (dash[0] ?? "").trim();
-  const role = (dash[1] ?? "").trim();
-
-  return {
-    threadId,
-    kind,
-    company: company ?? "",
-    role: role ?? "",
-    to: to.split(/[,;]\s*/).map((s) => s.trim()).filter(Boolean),
-    subject: subject.trim(),
-    body: text.slice(blank + 2),
-  };
 }
 
 const HELP = `Two things I can do.
@@ -789,15 +736,14 @@ async function handleAsk(chatId: number, ask: { email: string; role: string }) {
   if (checked.errors.length) {
     await say(
       chatId,
-      `${draft}${NL}${NL}⛔ Not sending this one:${NL}` +
-        checked.errors.map((e) => `• ${e.message}`).join(NL),
+      withNotes(draft, ["⛔ Not sending this one:", ...checked.errors.map((e) => `• ${e.message}`)]),
     );
     return;
   }
 
-  const notes = checked.warnings.map((w) => `⚠️ ${w.message}`).join(NL);
+  const notes = checked.warnings.map((w) => `⚠️ ${w.message}`);
 
-  await say(chatId, notes ? `${draft}${NL}${NL}${notes}` : draft, {
+  await say(chatId, withNotes(draft, notes), {
     reply_markup: {
       inline_keyboard: [
         [{ text: "✉️ Send it now", callback_data: "send" }],
@@ -1055,8 +1001,7 @@ async function handleMessage(message: TgMessage) {
     if (checked.errors.length) {
       await say(
         chatId,
-        `${draft}${NL}${NL}⛔ Not sending this one:${NL}` +
-          checked.errors.map((e) => `• ${e.message}`).join(NL),
+        withNotes(draft, ["⛔ Not sending this one:", ...checked.errors.map((e) => `• ${e.message}`)]),
       );
       continue;
     }
@@ -1064,7 +1009,9 @@ async function handleMessage(message: TgMessage) {
     if (!addresses.length) {
       await say(
         chatId,
-        `${draft}\n\n⚠️ No email address in this posting — I cannot send it. Open the app to add one.`,
+        withNotes(draft, [
+          "⚠️ No email address in this posting — I cannot send it. Open the app to add one.",
+        ]),
       );
       continue;
     }
@@ -1079,9 +1026,7 @@ async function handleMessage(message: TgMessage) {
           ]
         : []),
     ];
-    const warning = notes.length ? `${NL}${NL}${notes.join(NL)}` : "";
-
-    await say(chatId, draft + warning, {
+    await say(chatId, withNotes(draft, notes), {
       reply_markup: {
         inline_keyboard: [
           [{ text: "✉️ Send it now", callback_data: "send" }],

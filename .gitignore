@@ -27,3 +27,4 @@ tests/.linkedin.bundle.mjs
 tests/.resumeparse.bundle.mjs
 tests/.cloudinary.bundle.mjs
 tests/.fill.bundle.mjs
+tests/.draft.bundle.mjs

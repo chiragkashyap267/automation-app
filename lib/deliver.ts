@@ -1,4 +1,5 @@
 import { countSends, DAILY_HARD_LIMIT, sendsToday, type BatchDraft } from "./batch";
+import { stripTrailingNotes } from "./draftText";
 import { explainSmtpError, preflight, sendMail, type MailRequest } from "./mailer";
 import { loadOutbox, loadState, outboxAvailable, recordOutbound } from "./outbox";
 import { bounceHealth } from "./sendHealth";
@@ -84,7 +85,12 @@ export async function deliverDrafts(
     // A resume belongs with an application. Attaching it to a service
     // pitch makes the sender look like they want a job instead.
     const file = attachment && draft.kind !== "pitch" ? await attachment(draft) : undefined;
-    const problem = preflight({ to: draft.to, subject: draft.subject, text: draft.body });
+
+    // Last line of defence. A draft queued before the bot stopped printing
+    // its own warnings under the body is still sitting in the store, and
+    // this is the final place to catch one before it reaches an employer.
+    const text = stripTrailingNotes(draft.body);
+    const problem = preflight({ to: draft.to, subject: draft.subject, text });
     if (problem) {
       results.push(`✕ ${label} — ${problem}`);
       continue;
@@ -99,7 +105,7 @@ export async function deliverDrafts(
         cc: profile.ccSelf ? profile.gmailUser : undefined,
         replyTo: profile.email || undefined,
         subject: draft.subject,
-        text: draft.body,
+        text,
         inReplyTo: draft.inReplyTo || undefined,
         references: draft.inReplyTo || undefined,
         attachment: file,
